@@ -24,6 +24,7 @@ export function RankPanel({ className = "" }: { className?: string }) {
       title="个股榜单"
       icon="≣"
       accent="#fbbf24"
+      expandable
       right={
         <div className="flex items-center gap-1 text-[11px]">
           {TABS.map((t) => (

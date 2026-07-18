@@ -29,6 +29,34 @@ export function BoardFlowPanel({ className = "" }: { className?: string }) {
   }, [playing]);
 
   const label = playing ? "⏸ 暂停" : progress < 1 ? "▶ 继续" : "▶ 重放";
+  const chartContent = (zoom = false) => (
+    <div className={`h-full min-h-0 ${zoom ? "p-3" : "p-1.5"}`}>
+      {flows ? (
+        <BoardFlowChart flows={flows} progress={progress} zoom={zoom} />
+      ) : (
+        <div className={`flex h-full items-center justify-center text-slate-600 ${zoom ? "text-[22px]" : "text-[11px]"}`}>
+          {error ? <span className="text-rose-400/80">板块资金流连接失败,自动重试中…</span> : "板块资金流加载中…"}
+        </div>
+      )}
+    </div>
+  );
+
+  const playButton = (className: string) => (
+    <button
+      type="button"
+      onClick={() => {
+        if (progress >= 1) {
+          setProgress(0);
+          setPlaying(true);
+        } else {
+          setPlaying((p) => !p);
+        }
+      }}
+      className={className}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <Panel
@@ -36,32 +64,12 @@ export function BoardFlowPanel({ className = "" }: { className?: string }) {
       title="板块资金流向"
       icon="∿"
       accent="#f43f5e"
-      right={
-        <button
-          type="button"
-          onClick={() => {
-            if (progress >= 1) {
-              setProgress(0);
-              setPlaying(true);
-            } else {
-              setPlaying((p) => !p);
-            }
-          }}
-          className="rounded px-1.5 py-0.5 text-[10px] text-slate-400 transition hover:bg-slate-800 hover:text-slate-200"
-        >
-          {label}
-        </button>
-      }
+      expandable
+      expandedChildren={chartContent(true)}
+      expandedRight={playButton("rounded px-2 py-1 text-[16px] text-slate-300 transition hover:bg-slate-800 hover:text-slate-50")}
+      right={playButton("rounded px-1.5 py-0.5 text-[10px] text-slate-400 transition hover:bg-slate-800 hover:text-slate-200")}
     >
-      <div className="h-full min-h-0 p-1.5">
-        {flows ? (
-          <BoardFlowChart flows={flows} progress={progress} />
-        ) : (
-          <div className="flex h-full items-center justify-center text-[11px] text-slate-600">
-            {error ? <span className="text-rose-400/80">板块资金流连接失败,自动重试中…</span> : "板块资金流加载中…"}
-          </div>
-        )}
-      </div>
+      {chartContent()}
     </Panel>
   );
 }

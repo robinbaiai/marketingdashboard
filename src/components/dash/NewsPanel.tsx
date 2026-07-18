@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "./Panel";
 import { usePolling } from "@/hooks/usePolling";
 import { api, type NewsItem } from "@/lib/api";
@@ -19,7 +19,7 @@ function tagOf(item: NewsItem): { label: string; color: string } | null {
 function NewsRow({ item, isNew }: { item: NewsItem; isNew: boolean }) {
   const tag = tagOf(item);
   return (
-    <article className={`rounded border-l-2 px-2.5 py-2 transition-colors ${isNew ? "border-cyan-400 bg-cyan-500/5" : "border-slate-700/50 hover:bg-slate-800/30"}`}>
+    <article className={`min-h-[74px] rounded border-l-2 px-2.5 py-2 transition-colors duration-150 ${isNew ? "border-cyan-400 bg-cyan-500/5" : "border-slate-700/50 hover:bg-slate-800/30"}`}>
       <div className="flex items-center gap-2">
         <span className="text-[10px] text-slate-500" style={{ fontVariantNumeric: "tabular-nums" }}>{fmtTime(item.time)}</span>
         {tag && (
@@ -42,15 +42,40 @@ export function NewsPanel({ className = "" }: { className?: string }) {
   const seenRef = useRef<Set<number>>(new Set());
   const [autoScroll, setAutoScroll] = useState(true);
   const boxRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef({ top: 0, height: 0, atTop: true });
+  const pendingFreshRef = useRef(false);
 
   useEffect(() => {
     if (!data) return;
     const fresh = data.filter((d) => !seenRef.current.has(d.id)).map((d) => d.id);
+    pendingFreshRef.current = fresh.length > 0;
     if (seenRef.current.size > 0 && fresh.length) {
       setNewIds(new Set(fresh));
-      if (autoScroll) boxRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     }
     data.forEach((d) => seenRef.current.add(d.id));
+  }, [data]);
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box || !data) return;
+    const previous = layoutRef.current;
+    const heightDelta = box.scrollHeight - previous.height;
+    const hasFreshRows = pendingFreshRef.current;
+
+    if (hasFreshRows) {
+      if (autoScroll && previous.atTop) {
+        box.scrollTop = 0;
+      } else if (heightDelta > 0) {
+        box.scrollTop = previous.top + heightDelta;
+      }
+    }
+
+    layoutRef.current = {
+      top: box.scrollTop,
+      height: box.scrollHeight,
+      atTop: box.scrollTop < 8,
+    };
+    pendingFreshRef.current = false;
   }, [data, autoScroll]);
 
   const todayCount = useMemo(() => data?.length ?? 0, [data]);
@@ -61,6 +86,7 @@ export function NewsPanel({ className = "" }: { className?: string }) {
       title="实时热点新闻 · 7×24 快讯"
       icon="↯"
       accent="#f472b6"
+      expandable
       right={
         <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-slate-400">
           <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} className="accent-cyan-400" />
@@ -68,7 +94,18 @@ export function NewsPanel({ className = "" }: { className?: string }) {
         </label>
       }
     >
-      <div ref={boxRef} className="h-full space-y-1 overflow-y-auto scroll-smooth p-1.5">
+      <div
+        ref={boxRef}
+        className="h-full space-y-1 overflow-y-auto overscroll-contain p-1.5"
+        onScroll={(event) => {
+          const box = event.currentTarget;
+          layoutRef.current = {
+            top: box.scrollTop,
+            height: box.scrollHeight,
+            atTop: box.scrollTop < 8,
+          };
+        }}
+      >
         {data?.map((item) => <NewsRow key={item.id} item={item} isNew={newIds.has(item.id)} />)}
         {!data && (
           <div className="p-6 text-center text-[11px] text-slate-600">

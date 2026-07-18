@@ -16,6 +16,7 @@ export function MoneyFlowPanel({ className = "" }: { className?: string }) {
       title="实时资金流向 · 主力净流入"
       icon="⇄"
       accent="#fb7185"
+      expandable
       right={
         <span className="text-[10px] text-slate-500">
           TOP15 合计 <span className={clsChg(total)}>{fmtYuan(total)}</span>

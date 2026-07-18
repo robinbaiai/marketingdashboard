@@ -50,7 +50,7 @@ export function IndexPanel({ className = "" }: { className?: string }) {
   ];
 
   return (
-    <Panel className={className} title="全球关键指数" icon="▦" accent="#38bdf8"
+    <Panel className={className} title="全球关键指数" icon="▦" accent="#38bdf8" expandable
       right={<span className="text-[10px] text-slate-500">5s</span>}>
       <div className="flex h-full flex-col justify-between overflow-y-auto p-1">
         {groups.map((g) => (

@@ -74,7 +74,7 @@ export function TreasuryPanel({ className = "" }: { className?: string }) {
   const spread3m10y = m3 && y10 ? (y10.yield - m3.yield) * 100 : null;
 
   return (
-    <Panel className={className} title="美债国债市场" icon="◧" accent="#a78bfa"
+    <Panel className={className} title="美债国债市场" icon="◧" accent="#a78bfa" expandable
       right={<span className="text-[10px] text-slate-500">CNBC · 60s</span>}>
       <div className="flex h-full flex-col p-2.5">
         {/* 利差指标 */}

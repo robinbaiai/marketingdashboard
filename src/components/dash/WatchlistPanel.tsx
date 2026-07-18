@@ -63,6 +63,7 @@ export function WatchlistPanel({ className = "" }: { className?: string }) {
       title="自选股"
       icon="★"
       accent="#fbbf24"
+      expandable
       right={<span className="text-[10px] text-slate-500">{codes.length}只 · 5s</span>}
     >
       <div className="flex h-full min-h-0 flex-col">

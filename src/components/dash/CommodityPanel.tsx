@@ -21,7 +21,7 @@ export function CommodityPanel({ className = "" }: { className?: string }) {
   );
 
   return (
-    <Panel className={className} title="大宗商品" icon="◆" accent="#f5c542"
+    <Panel className={className} title="大宗商品" icon="◆" accent="#f5c542" expandable
       right={<span className="text-[10px] text-slate-500">8s</span>}>
       <div className="flex h-full flex-col divide-y divide-slate-800/60">
         {COMMODITIES.map((c) => {
