@@ -52,46 +52,41 @@ export function SectorPanel({ className = "" }: { className?: string }) {
   const [dir, setDir] = useState<0 | 1>(0);
   const [selected, setSelected] = useState<Board | null>(null);
   const [q, setQ] = useState("");
-  // 轮播: 默认开启, 手动点击板块后暂停
-  const [auto, setAuto] = useState(true);
+  // 轮播: 默认关闭, 需要时手动开启
+  const [auto, setAuto] = useState(false);
   const [idx, setIdx] = useState(0);
 
   // 全量拉取(行业 124 / 概念 ~800), 前端本地搜索过滤
   const { data: boards, error } = usePolling(() => api.boards(kind, dir, kind === "01" ? 300 : 1000), 15000, [kind, dir]);
-  const { data: stocks } = usePolling(
-    () => (selected ? api.boardStocks(selected.code, 300) : Promise.resolve(null)),
-    15000,
-    [selected?.code]
-  );
-
   const filtered = useMemo(() => boards?.filter((b) => !q || b.name.includes(q)), [boards, q]);
   const maxAbs = filtered ? Math.max(...filtered.map((b) => Math.abs(b.pct)), 0.01) : 1;
+  const activeBoard = auto && filtered?.length ? filtered[idx % filtered.length] : selected;
+  const { data: stocks } = usePolling(
+    () => (activeBoard ? api.boardStocks(activeBoard.code, 300) : Promise.resolve(null)),
+    15000,
+    [activeBoard?.code]
+  );
 
-  // 榜单/搜索变化时回到第一个板块
-  useEffect(() => setIdx(0), [kind, dir, q]);
   // 定时推进轮播索引
   useEffect(() => {
     if (!auto || !filtered?.length) return;
     const t = window.setInterval(() => setIdx((i) => i + 1), ROTATE_MS);
     return () => window.clearInterval(t);
   }, [auto, filtered?.length]);
-  // 轮播模式下同步选中项
-  useEffect(() => {
-    if (!auto || !filtered?.length) return;
-    const next = filtered[idx % filtered.length];
-    setSelected((current) => (current?.code === next.code ? current : next));
-  }, [auto, idx, filtered]);
 
   const pick = (b: Board) => {
     setAuto(false);
-    setSelected(selected?.code === b.code && !auto ? null : b);
+    setSelected(activeBoard?.code === b.code && !auto ? null : b);
   };
 
   const controls = (zoom = false) => (
     <div className={`flex items-center gap-1 ${zoom ? "text-[14px]" : "text-[11px]"}`}>
       <input
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setIdx(0);
+        }}
         placeholder="搜索板块"
         className={`rounded border border-slate-700/50 bg-slate-800/40 px-1.5 py-0.5 text-slate-200 outline-none placeholder:text-slate-600 focus:border-cyan-500/50 ${zoom ? "w-32 text-[14px]" : "w-20 text-[11px]"}`}
       />
@@ -105,7 +100,10 @@ export function SectorPanel({ className = "" }: { className?: string }) {
       {([["01", "行业"], ["02", "概念"]] as [Kind, string][]).map(([k, label]) => (
         <button
           key={k}
-          onClick={() => { setKind(k); setAuto(true); }}
+          onClick={() => {
+            setKind(k);
+            setIdx(0);
+          }}
           className={`rounded px-2 py-0.5 ${kind === k ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}
         >
           {label}
@@ -115,7 +113,10 @@ export function SectorPanel({ className = "" }: { className?: string }) {
       {([0, 1] as const).map((d) => (
         <button
           key={d}
-          onClick={() => setDir(d)}
+          onClick={() => {
+            setDir(d);
+            setIdx(0);
+          }}
           className={`rounded px-2 py-0.5 ${dir === d ? "bg-cyan-500/20 text-cyan-300" : "text-slate-400 hover:text-slate-200"}`}
         >
           {d === 0 ? "领涨" : "领跌"}
@@ -141,7 +142,7 @@ export function SectorPanel({ className = "" }: { className?: string }) {
           <span className="text-right">领涨股</span>
         </div>
         {filtered?.map((b) => (
-          <BoardRow key={b.code} b={b} maxAbs={maxAbs} active={selected?.code === b.code}
+          <BoardRow key={b.code} b={b} maxAbs={maxAbs} active={activeBoard?.code === b.code}
             onClick={() => pick(b)} zoom={zoom} />
         ))}
         {!filtered && (
@@ -155,15 +156,15 @@ export function SectorPanel({ className = "" }: { className?: string }) {
       </div>
 
       {/* 成分股侧栏 */}
-      {selected && (
+      {activeBoard && (
         <div className={`${zoom ? "w-[46%] p-4" : "w-[min(440px,52%)] p-2"} shrink-0 overflow-y-auto border-l border-slate-700/40 [overflow-anchor:none]`}>
           <div className="mb-2 flex items-baseline justify-between">
-            <span className={`font-semibold text-cyan-300 ${zoom ? "text-[24px]" : "text-[12px]"}`}>{selected.name}</span>
-            <span className={`font-semibold ${zoom ? "text-[24px]" : "text-[12px]"} ${clsChg(selected.pct)}`}>{fmtPct(selected.pct)}</span>
+            <span className={`font-semibold text-cyan-300 ${zoom ? "text-[24px]" : "text-[12px]"}`}>{activeBoard.name}</span>
+            <span className={`font-semibold ${zoom ? "text-[24px]" : "text-[12px]"} ${clsChg(activeBoard.pct)}`}>{fmtPct(activeBoard.pct)}</span>
           </div>
           <div className={`mb-3 grid grid-cols-2 gap-1 text-slate-500 ${zoom ? "text-[18px]" : "text-[10px]"}`}>
-            <span>5日 <span className={clsChg(selected.pct5)}>{fmtPct(selected.pct5)}</span></span>
-            <span>20日 <span className={clsChg(selected.pct20)}>{fmtPct(selected.pct20)}</span></span>
+            <span>5日 <span className={clsChg(activeBoard.pct5)}>{fmtPct(activeBoard.pct5)}</span></span>
+            <span>20日 <span className={clsChg(activeBoard.pct20)}>{fmtPct(activeBoard.pct20)}</span></span>
           </div>
           <div className={zoom ? "space-y-2" : "space-y-0.5"}>
             {stocks?.map((s) => (

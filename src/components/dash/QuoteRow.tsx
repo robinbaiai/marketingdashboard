@@ -3,6 +3,7 @@ import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { Spark } from "./Spark";
 import { clsChg, fmtPct, fmtPrice, fmtYuan } from "@/lib/format";
+import { StockLink } from "./StockLink";
 
 const TNUM = { fontVariantNumeric: "tabular-nums" } as const;
 
@@ -142,7 +143,7 @@ export function QuoteRow({
         {/* 左格: 名称+代码, 跨2行 */}
         <div className="row-span-2 flex min-w-0 flex-col justify-center leading-none">
           <span className="truncate text-[12px] text-slate-200">{name}</span>
-          <span className="text-[9px] text-slate-600">{code}</span>
+          <StockLink code={code} className="text-[9px] text-slate-600" />
         </div>
 
         {/* 第一行: 分时图(跨2列, 恒占 20px 高度) */}

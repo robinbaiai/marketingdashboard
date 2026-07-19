@@ -4,6 +4,7 @@ interface PanelProps {
   title: string;
   icon?: string;
   right?: ReactNode;
+  titleExtra?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClassName?: string;
@@ -11,6 +12,7 @@ interface PanelProps {
   expandable?: boolean;
   expandedChildren?: ReactNode;
   expandedRight?: ReactNode;
+  expandedTitleExtra?: ReactNode;
   expandedBodyClassName?: string;
 }
 
@@ -19,6 +21,7 @@ export function Panel({
   title,
   icon,
   right,
+  titleExtra,
   children,
   className = "",
   bodyClassName = "",
@@ -26,6 +29,7 @@ export function Panel({
   expandable = false,
   expandedChildren,
   expandedRight,
+  expandedTitleExtra,
   expandedBodyClassName = "",
 }: PanelProps) {
   const [expanded, setExpanded] = useState(false);
@@ -65,6 +69,7 @@ export function Panel({
           ) : (
             titleContent
           )}
+          {titleExtra}
           <div className="ml-auto flex items-center gap-2">{right}</div>
         </header>
         <div className={`min-h-0 flex-1 ${bodyClassName}`}>{children}</div>
@@ -79,17 +84,18 @@ export function Panel({
             if (event.target === event.currentTarget) setExpanded(false);
           }}
         >
-          <section className="flex h-[70vh] w-[70vw] max-w-[1180px] min-w-[720px] flex-col rounded-md border border-cyan-400/50 bg-[#0c1320] shadow-[0_0_48px_rgba(34,211,238,0.24)] max-lg:h-[78vh] max-lg:w-[94vw] max-lg:min-w-0">
+          <section className="flex h-[88vh] w-[88vw] max-w-[1680px] min-w-[720px] flex-col rounded-md border border-cyan-400/50 bg-[#0c1320] shadow-[0_0_48px_rgba(34,211,238,0.24)] max-lg:h-[86vh] max-lg:w-[96vw] max-lg:min-w-0">
             <header className="flex h-10 shrink-0 items-center gap-2 border-b border-slate-700/50 px-3">
               <span className="inline-block h-4 w-1.5 rounded-sm" style={{ background: accent }} />
               {icon && <span className="text-[18px] leading-none" style={{ color: accent }}>{icon}</span>}
-              <h2 className="text-[18px] font-semibold tracking-wide text-slate-100">{title}</h2>
-              <div className="ml-auto flex items-center gap-2">
+              <h2 className="shrink-0 text-[18px] font-semibold tracking-wide text-slate-100">{title}</h2>
+              {expandedTitleExtra ?? titleExtra}
+              <div className="ml-3 flex min-w-0 flex-1 items-center justify-end gap-2">
                 {expandedRight}
                 <button
                   type="button"
                   onClick={() => setExpanded(false)}
-                  className="rounded px-2 py-1 text-[16px] text-slate-400 transition hover:bg-slate-800 hover:text-slate-50"
+                  className="shrink-0 rounded px-2 py-1 text-[16px] text-slate-400 transition hover:bg-slate-800 hover:text-slate-50"
                   title="关闭"
                 >
                   关闭

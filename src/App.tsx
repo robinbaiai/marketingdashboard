@@ -2,12 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { Routes, Route } from "react-router";
 import { TickerTape, type TapeItem } from "@/components/dash/TickerTape";
 import { IndexPanel } from "@/components/dash/IndexPanel";
-import { CommodityPanel } from "@/components/dash/CommodityPanel";
-import { TreasuryPanel } from "@/components/dash/TreasuryPanel";
 import { SectorPanel } from "@/components/dash/SectorPanel";
 import { MoneyFlowPanel } from "@/components/dash/MoneyFlowPanel";
 import { RankPanel } from "@/components/dash/RankPanel";
 import { BoardFlowPanel } from "@/components/dash/BoardFlowPanel";
+import { MysteryCodePanel } from "@/components/dash/MysteryCodePanel";
 import { NewsPanel } from "@/components/dash/NewsPanel";
 import { ChainPanel } from "@/components/dash/ChainPanel";
 import { WatchlistPanel } from "@/components/dash/WatchlistPanel";
@@ -45,7 +44,7 @@ function Header() {
       </div>
       <div className="mx-1 h-4 w-px bg-slate-700" />
       <div className="hidden items-center gap-3 text-[10px] text-slate-500 lg:flex">
-        <span>沪深港美 · 大宗 · 美债 · 板块 · 资金流 · 快讯 · 产业链</span>
+        <span>沪深港美 · 板块 · 资金流 · 选股 · 快讯 · 产业链</span>
       </div>
       <div className="ml-auto flex items-center gap-3">
         <span className="flex items-center gap-1.5 text-[10px] text-emerald-400">
@@ -113,13 +112,12 @@ function Dashboard() {
           <SectorPanel className="col-span-12 h-[560px] lg:h-auto lg:col-span-5" />
           <NewsPanel className="col-span-12 h-[560px] lg:h-auto lg:col-span-4" />
         </div>
-        {/* 第二行:美债 / 榜单 / 资金流 / 板块资金流 / 大宗 */}
+        {/* 第二行: 神秘代码 / 板块资金流 / 资金流 / 榜单 */}
         <div className="grid min-h-0 grid-cols-10 gap-1">
+          <MysteryCodePanel className="col-span-10 h-[420px] lg:h-auto lg:col-span-4" />
           <BoardFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
           <MoneyFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
           <RankPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
-          <CommodityPanel className="col-span-10 h-[300px] lg:h-auto lg:col-span-2" />
-          <TreasuryPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
         </div>
         {/* 第三行:自选股 / 产业链 */}
         <div className="grid min-h-0 grid-cols-12 gap-1">

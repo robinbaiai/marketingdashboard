@@ -23,10 +23,26 @@ function curlText(url, { referer, timeout = 8000, encoding = "gbk" } = {}) {
 
 const PORT = process.env.PORT || 3000;
 const DIST = path.join(__dirname, "..", "dist");
+const CHAIN_CACHE_DIR = path.join(__dirname, "cache", "chains");
+const ENV_LOCAL = path.join(__dirname, "..", ".env.local");
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 /* ---------------- 基础工具 ---------------- */
+function loadLocalEnv() {
+  if (!fs.existsSync(ENV_LOCAL)) return;
+  const text = fs.readFileSync(ENV_LOCAL, "utf-8");
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const m = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!m || process.env[m[1]]) continue;
+    process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+  }
+}
+
+loadLocalEnv();
+
 async function fetchText(url, { referer, gbk = false, timeout = 8000 } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
@@ -205,6 +221,512 @@ function parseFutures(text) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function pickValue(obj, matchers) {
+  for (const [key, value] of Object.entries(obj || {})) {
+    if (matchers.some((m) => key.includes(m))) return value;
+  }
+  return undefined;
+}
+
+function pickRatioValue(obj) {
+  for (const [key, value] of Object.entries(obj || {})) {
+    if ((key.includes("/") || key.includes("除以")) && (key.includes("成交额") || key.includes("成交金额"))) return value;
+  }
+  return pickValue(obj, ["放量倍数", "成交额放量", "成交金额放量"]);
+}
+
+function parseMaybeNumber(v) {
+  if (v == null || v === "") return undefined;
+  const n = parseFloat(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function iwencaiErrorFromText(text) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (clean.includes("次数已用完")) return "IWENCAI_QUOTA_EXHAUSTED: 问财今日次数已用完";
+  if (clean.includes("Invalid") || clean.includes("Unauthorized") || clean.includes("鉴权") || clean.includes("权限")) {
+    return "IWENCAI_AUTH_FAILED: 问财鉴权失败";
+  }
+  return `IWENCAI_NON_JSON: ${clean.slice(0, 160)}`;
+}
+
+function normalizeIwencaiStock(item) {
+  return {
+    code: String(item["股票代码"] || item.code || ""),
+    name: String(item["股票简称"] || item.name || ""),
+    price: parseMaybeNumber(item["最新价"] ?? item.price),
+    pct: parseMaybeNumber(item["最新涨跌幅"] ?? pickValue(item, ["涨跌幅"]) ?? item.pct),
+    ratio: parseMaybeNumber(pickRatioValue(item)),
+    avgAmount3: parseMaybeNumber(pickValue(item, ["平均成交额[20260715-20260717]", "区间日均成交额[20260715-20260717]", "最近3日区间日均成交额", "最近3日平均成交金额", "成交额平均值"])),
+    avgAmount20: parseMaybeNumber(pickValue(item, ["平均成交额[20260618-20260716]", "区间日均成交额[20260618-20260716]", "前20日区间日均成交额", "前20日平均成交金额"])),
+    rangePct5: parseMaybeNumber(pickValue(item, ["涨跌幅[20260713-20260717]", "最近5日区间涨跌幅"])),
+    raw: item,
+  };
+}
+
+async function handleMysterySelect(query, limit = "30", page = "1") {
+  const apiKey = process.env.IWENCAI_API_KEY;
+  if (!apiKey) throw new Error("IWENCAI_API_KEY is not configured");
+  const base = (process.env.IWENCAI_BASE_URL || "https://openapi.iwencai.com").replace(/\/$/, "");
+  const traceId = require("crypto").randomBytes(32).toString("hex");
+  const payload = {
+    query,
+    page: String(parseInt(page, 10) || 1),
+    limit: String(Math.min(Math.max(parseInt(limit, 10) || 30, 1), 80)),
+    is_cache: "1",
+    expand_index: "true",
+  };
+  const resp = await fetch(`${base}/v1/query2data`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "X-Claw-Call-Type": "normal",
+      "X-Claw-Skill-Id": "hithink-astock-selector",
+      "X-Claw-Skill-Version": "1.0.0",
+      "X-Claw-Plugin-Id": "none",
+      "X-Claw-Plugin-Version": "none",
+      "X-Claw-Trace-Id": traceId,
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(iwencaiErrorFromText(text));
+  }
+  if (!resp.ok) throw new Error(json?.message || json?.error || `IWENCAI_HTTP_${resp.status}`);
+  const datas = Array.isArray(json.datas) ? json.datas : Array.isArray(json.data) ? json.data : [];
+  return {
+    query,
+    total: Number(json.code_count || datas.length || 0),
+    rows: datas.map(normalizeIwencaiStock),
+    chunksInfo: json.chunks_info,
+  };
+}
+
+function safeSlug(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "chain";
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeJsonFile(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+async function iwencaiRawQuery(query, { limit = "20", page = "1", skillId = "hithink-astock-selector" } = {}) {
+  const apiKey = process.env.IWENCAI_API_KEY;
+  if (!apiKey) throw new Error("IWENCAI_API_KEY is not configured");
+  const base = (process.env.IWENCAI_BASE_URL || "https://openapi.iwencai.com").replace(/\/$/, "");
+  const traceId = require("crypto").randomBytes(32).toString("hex");
+  const payload = {
+    query,
+    page: String(parseInt(page, 10) || 1),
+    limit: String(Math.min(Math.max(parseInt(limit, 10) || 20, 1), 80)),
+    is_cache: "1",
+    expand_index: "true",
+  };
+  const resp = await fetch(`${base}/v1/query2data`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "X-Claw-Call-Type": "normal",
+      "X-Claw-Skill-Id": skillId,
+      "X-Claw-Skill-Version": "1.0.0",
+      "X-Claw-Plugin-Id": "none",
+      "X-Claw-Plugin-Version": "none",
+      "X-Claw-Trace-Id": traceId,
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(iwencaiErrorFromText(text));
+  }
+  if (!resp.ok) throw new Error(json?.message || json?.error || `IWENCAI_HTTP_${resp.status}`);
+  return json;
+}
+
+async function handleChainResearch(topic, refresh = "0") {
+  const name = String(topic || "").trim();
+  if (!name) throw new Error("topic is required");
+  const slug = safeSlug(name);
+  const file = path.join(CHAIN_CACHE_DIR, `${slug}.json`);
+  const cachedData = readJsonFile(file);
+  if (cachedData && refresh !== "1") return { ...cachedData, cached: true };
+
+  const query = `${name}产业链上中下游，每个环节核心方向、代表A股股票、投资含义`;
+  const raw = await iwencaiRawQuery(query, { limit: "40", skillId: "hithink-astock-selector" });
+  const data = {
+    topic: name,
+    query,
+    source: "同花顺问财",
+    generatedAt: new Date().toISOString(),
+    cacheFile: file,
+    codeCount: Number(raw.code_count || 0),
+    rows: Array.isArray(raw.datas) ? raw.datas.slice(0, 80) : [],
+    chunksInfo: raw.chunks_info,
+    rawKeys: Object.keys(raw || {}),
+    note: "这是问财研究缓存原始结果。进入展示前应人工确认并整理为 Chain/segments/stocks 结构。",
+  };
+  writeJsonFile(file, data);
+  return { ...data, cached: false };
+}
+
+/* ---------------- 产业链粘贴内容解析(LLM 优先, 本地规则兜底) ---------------- */
+const STOCK_NAME_CACHE = new Map();
+
+function normalizeStockCode(market, code) {
+  const c = String(code || "").replace(/\D/g, "").padStart(6, "0");
+  const mk = String(market || "").toLowerCase();
+  if (mk === "hk") return `hk${String(code || "").replace(/\D/g, "").padStart(5, "0")}`;
+  if (mk === "sh" || /^6/.test(c)) return `sh${c}`;
+  if (mk === "sz" || /^[03]/.test(c)) return `sz${c}`;
+  if (mk === "bj" || /^[489]/.test(c)) return `bj${c}`;
+  return c;
+}
+
+function stockNameMapFromConfig() {
+  const file = path.join(__dirname, "..", "src", "config", "dashboard.ts");
+  const map = new Map();
+  try {
+    const text = fs.readFileSync(file, "utf-8");
+    const re = /\{\s*code:\s*"([^"]+)",\s*name:\s*"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(text))) map.set(m[2], m[1]);
+  } catch { /* ignore local dictionary failures */ }
+  return map;
+}
+
+const LOCAL_STOCK_NAME_MAP = stockNameMapFromConfig();
+const SUPPLEMENTAL_STOCK_NAME_MAP = new Map([
+  ["贝特瑞", "bj835185"],
+]);
+
+async function lookupStockByName(name) {
+  const clean = String(name || "").replace(/[＊*#]/g, "").trim();
+  if (!clean) return null;
+  if (LOCAL_STOCK_NAME_MAP.has(clean)) return { name: clean, code: LOCAL_STOCK_NAME_MAP.get(clean) };
+  if (SUPPLEMENTAL_STOCK_NAME_MAP.has(clean)) return { name: clean, code: SUPPLEMENTAL_STOCK_NAME_MAP.get(clean) };
+  if (STOCK_NAME_CACHE.has(clean)) return STOCK_NAME_CACHE.get(clean);
+
+  let out = null;
+  try {
+    const text = await fetchText(`https://smartbox.gtimg.cn/s3/?q=${encodeURIComponent(clean)}&t=all`, { timeout: 5000 });
+    const body = decodeEscapedUnicode(text.match(/"([^"]*)"/)?.[1] || "");
+    for (const item of body.split("^")) {
+      const [market, code, stockName, , type] = item.split("~");
+      if (!stockName || stockName !== clean) continue;
+      if (!String(type || "").startsWith("GP")) continue;
+      if (!["sh", "sz", "bj", "hk"].includes(market)) continue;
+      out = { name: clean, code: normalizeStockCode(market, code) };
+      break;
+    }
+  } catch { /* keep unresolved */ }
+  STOCK_NAME_CACHE.set(clean, out);
+  return out;
+}
+
+function stripCodeFence(text) {
+  return String(text || "").replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
+
+function jsonFromText(text) {
+  const raw = stripCodeFence(text);
+  try { return JSON.parse(raw); } catch { /* continue */ }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start >= 0 && end > start) return JSON.parse(raw.slice(start, end + 1));
+  throw new Error("LLM did not return JSON");
+}
+
+function decodeEscapedUnicode(text) {
+  return String(text || "").replace(/\\u([0-9a-fA-F]{4})/g, (_m, code) => String.fromCharCode(parseInt(code, 16)));
+}
+
+function splitCsv(value) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function addLlmProvider(providers, provider) {
+  if (!provider.key || !provider.baseUrl || provider.models.length === 0) return;
+  providers.push({
+    ...provider,
+    baseUrl: provider.baseUrl.replace(/\/$/, ""),
+  });
+}
+
+function chatCompletionsEndpoint(baseUrl) {
+  let raw = String(baseUrl || "").trim();
+  if (raw.startsWith("//")) raw = `https:${raw}`;
+  if (raw && !raw.includes("://")) raw = `https://${raw}`;
+  const normalized = raw.replace(/\/$/, "");
+  if (normalized.endsWith("/chat/completions")) return normalized;
+  if (normalized.endsWith("/v1")) return `${normalized}/chat/completions`;
+  return `${normalized}/chat/completions`;
+}
+
+function chainParserProviders() {
+  const providers = [];
+
+  addLlmProvider(providers, {
+    name: "chain",
+    key: process.env.CHAIN_LLM_API_KEY,
+    baseUrl: process.env.CHAIN_LLM_BASE_URL,
+    models: splitCsv(process.env.CHAIN_LLM_MODELS || process.env.CHAIN_LLM_MODEL || "kimi-for-coding"),
+  });
+
+  addLlmProvider(providers, {
+    name: "kimi",
+    key: process.env.KIMI_API_KEY || process.env.TKS_API_KEY,
+    baseUrl: process.env.KIMI_BASE_URL || process.env.TKS_BASE_URL,
+    models: splitCsv(process.env.KIMI_MODELS || process.env.KIMI_MODEL || "kimi-for-coding"),
+  });
+
+  addLlmProvider(providers, {
+    name: "deepseek",
+    key: process.env.DEEPSEEK_API_KEY,
+    baseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
+    models: splitCsv(process.env.DEEPSEEK_MODELS || process.env.DEEPSEEK_MODEL || "deepseek-v4-pro"),
+  });
+
+  addLlmProvider(providers, {
+    name: "minimax",
+    key: process.env.MINIMAX_API_KEY,
+    baseUrl: process.env.MINIMAX_BASE_URL || "https://api.minimax.chat/v1",
+    models: splitCsv(process.env.MINIMAX_MODELS || process.env.MINIMAX_MODEL || "MiniMax-M3"),
+  });
+
+  addLlmProvider(providers, {
+    name: "openai",
+    key: process.env.OPENAI_API_KEY,
+    baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+    models: splitCsv(process.env.OPENAI_MODELS || process.env.OPENAI_MODEL || "gpt-4.1-mini"),
+  });
+
+  return providers;
+}
+
+async function callChainParserLLM(name, content) {
+  const providers = chainParserProviders();
+  if (providers.length === 0) return null;
+  const parsedTemperature = parseFloat(process.env.CHAIN_LLM_TEMPERATURE);
+  const temperature = Number.isFinite(parsedTemperature) ? parsedTemperature : 1;
+  const parsedTimeout = parseInt(process.env.CHAIN_LLM_TIMEOUT_MS || "", 10);
+  const timeoutMs = Number.isFinite(parsedTimeout) ? parsedTimeout : 45000;
+  const system = [
+    "你是A股产业链结构化助手。只输出严格JSON, 不要Markdown。",
+    "把用户粘贴的问财结论整理为上游、中游、下游三段。",
+    "不要臆造股票；只使用原文出现的股票名。没有代码可留空。",
+    "JSON schema: {\"name\":\"产业链名\",\"segments\":[{\"name\":\"上游 · ...\",\"desc\":\"核心环节简述\",\"stocks\":[{\"name\":\"股票名\",\"code\":\"可选\",\"tag\":\"环节标签\"}]}],\"tech\":[\"关键词\"],\"keywords\":[\"板块关键词\"]}",
+  ].join("\n");
+  const errors = [];
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      try {
+        const resp = await fetch(chatCompletionsEndpoint(provider.baseUrl), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${provider.key}`,
+          },
+          body: JSON.stringify({
+            model,
+            temperature,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: `产业链标题: ${name}\n\n问财结论:\n${content}` },
+            ],
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new Error(`HTTP ${resp.status}${text ? ` ${text.slice(0, 240)}` : ""}`);
+        }
+        const json = await resp.json();
+        return { parsed: jsonFromText(json?.choices?.[0]?.message?.content || ""), model, provider: provider.name };
+      } catch (e) {
+        errors.push(`${provider.name}/${model}: ${e.message || e}`);
+      }
+    }
+  }
+  throw new Error(`all LLM models failed: ${errors.join(" | ")}`);
+}
+
+const SEGMENT_LABELS = [
+  { key: "up", label: "上游", prefix: "上游" },
+  { key: "mid", label: "中游", prefix: "中游" },
+  { key: "down", label: "下游", prefix: "下游" },
+];
+
+function cleanupText(text) {
+  return String(text || "")
+    .replace(/\*\*/g, "")
+    .replace(/\|/g, " ")
+    .replace(/\t/g, " ")
+    .replace(/[　]+/g, " ")
+    .trim();
+}
+
+function likelyStockName(token) {
+  const t = token.replace(/[（(].*?[）)]/g, "").trim();
+  if (!/^[\u4e00-\u9fa5A-Za-z0-9·]{2,12}$/.test(t)) return "";
+  if (/^(上游|中游|下游)/.test(t)) return "";
+  if (/^(核心|环节|材料|设备|运营|逻辑|方向|投资|含义|产业链|代表|龙头|股票|公司|试剂|模型|应用|电芯)$/.test(t)) return "";
+  return t;
+}
+
+function extractNames(text) {
+  const names = new Set();
+  for (const name of LOCAL_STOCK_NAME_MAP.keys()) {
+    if (text.includes(name)) names.add(name);
+  }
+  const stockArea = text
+    .replace(/(上游|中游|下游)[^：:\n]{0,16}[：:]/g, " ")
+    .replace(/核心逻辑[\s\S]*/g, "")
+    .replace(/投资含义[\s\S]*/g, "")
+    .replace(/是[^，。；;]+/g, "");
+  for (const raw of stockArea.split(/[、,，;；\s]+/)) {
+    const candidate = likelyStockName(raw);
+    if (candidate) names.add(candidate);
+  }
+  return [...names];
+}
+
+function localParseChain(name, content) {
+  const text = cleanupText(content);
+  const out = { name: name.trim(), segments: [], tech: [], keywords: [name.trim()], source: "local", warnings: [] };
+  const marker = /(上游|中游|下游)([^：:\n]{0,16})[：:]/g;
+  const hits = [];
+  let m;
+  while ((m = marker.exec(text))) hits.push({ label: m[1], title: m[2].trim(), index: m.index });
+  for (let i = 0; i < SEGMENT_LABELS.length; i++) {
+    const segDef = SEGMENT_LABELS[i];
+    const matchingHits = hits.filter((h) => h.label === segDef.label);
+    const chunks = matchingHits.length
+      ? matchingHits.map((hit) => {
+          const next = hits.find((h) => h.index > hit.index);
+          return text.slice(hit.index, next?.index || text.length);
+        })
+      : [text];
+    const desc = [...new Set(matchingHits.map((hit) => hit.title.split(/[、,，\s]+/)[0].trim()).filter(Boolean))].join("/") ||
+      (segDef.label === "上游" ? "材料/资源" : segDef.label === "中游" ? "制造/服务" : "应用/运营");
+    out.segments.push({
+      name: `${segDef.label} · ${desc}`,
+      desc,
+      stocks: extractNames(chunks.join("\n")).map((stockName) => ({ name: stockName, tag: desc })),
+    });
+  }
+  out.tech = [...new Set(text.match(/[A-Za-z0-9+\-/]{2,20}|[\u4e00-\u9fa5]{2,8}/g) || [])]
+    .filter((x) => !/(上游|中游|下游|股票|公司|核心|逻辑|代表|产业链)/.test(x))
+    .slice(0, 8);
+  return out;
+}
+
+function normalizeParsedChain(parsed, fallbackName, source) {
+  const name = String(parsed?.name || fallbackName || "").trim();
+  const rawSegments = Array.isArray(parsed?.segments) ? parsed.segments : [];
+  const segments = SEGMENT_LABELS.map((segDef, i) => {
+    const found = rawSegments.find((s) => String(s?.name || "").includes(segDef.label)) || rawSegments[i] || {};
+    const rawDesc = String(found.desc || found.core || found.title || "").trim();
+    const desc = rawDesc.split(/\s{2,}|代表|龙头|核心股票|股票|核心逻辑|投资含义/)[0].trim().slice(0, 48) ||
+      (segDef.label === "上游" ? "材料/资源" : segDef.label === "中游" ? "制造/服务" : "应用/运营");
+    const rawTitle = String(found.name || `${segDef.label} · ${desc}`).trim();
+    const title = rawTitle.replace(/^([上中下]游\s*·\s*[^\s，,。]{1,18}).*$/, "$1");
+    const stocks = Array.isArray(found.stocks) ? found.stocks : [];
+    return {
+      name: title.includes(segDef.label) ? title : `${segDef.label} · ${title}`,
+      desc,
+      stocks: stocks
+        .map((s) => ({
+          code: String(s?.code || "").trim(),
+          name: String(s?.name || "").trim(),
+          tag: String(s?.tag || s?.role || desc || "").trim().slice(0, 12),
+        }))
+        .filter((s) => s.name),
+    };
+  });
+  return {
+    name,
+    segments,
+    tech: Array.isArray(parsed?.tech) ? parsed.tech.map(String).filter(Boolean).slice(0, 8) : [name],
+    keywords: Array.isArray(parsed?.keywords) ? parsed.keywords.map(String).filter(Boolean).slice(0, 12) : [name],
+    source,
+    warnings: Array.isArray(parsed?.warnings) ? parsed.warnings : [],
+  };
+}
+
+async function enrichParsedChain(parsed) {
+  const warnings = [...(parsed.warnings || [])];
+  for (const seg of parsed.segments) {
+    const seen = new Set();
+    const enriched = [];
+    for (const stock of seg.stocks) {
+      const hit = stock.code ? { code: stock.code, name: stock.name } : await lookupStockByName(stock.name);
+      if (!hit?.code) {
+        continue;
+      }
+      const code = normalizeStockCode(hit.code.slice(0, 2), hit.code);
+      if (seen.has(code)) continue;
+      seen.add(code);
+      enriched.push({ code, name: hit.name || stock.name, tag: stock.tag || seg.desc });
+    }
+    seg.stocks = enriched;
+    if (enriched.length === 0) warnings.push(`${seg.name} 未能确认股票代码`);
+  }
+  return { ...parsed, warnings };
+}
+
+async function handleChainParse(body) {
+  const name = String(body?.name || "").trim();
+  const content = String(body?.content || "").trim();
+  if (!name) throw new Error("missing chain name");
+  if (!content || content.length < 10) throw new Error("missing chain content");
+  let parsed = null;
+  let source = "local";
+  let sourceModel = "";
+  const warnings = [];
+  try {
+    const llm = await callChainParserLLM(name, content);
+    if (llm?.parsed) {
+      parsed = llm.parsed;
+      source = "llm";
+      sourceModel = llm.provider ? `${llm.provider}/${llm.model}` : llm.model;
+    }
+  } catch (e) {
+    warnings.push(`LLM整理不可用，已使用本地规则: ${e.message || e}`);
+  }
+  if (!parsed) parsed = localParseChain(name, content);
+  const normalized = normalizeParsedChain(parsed, name, source);
+  if (sourceModel) normalized.sourceModel = sourceModel;
+  normalized.warnings = [...warnings, ...(normalized.warnings || [])];
+  return enrichParsedChain(normalized);
+}
 
 /* ---------------- 内盘期货(沪金等):新浪 nf_ ---------------- */
 function parseSinaDomestic(text) {
@@ -738,6 +1260,30 @@ async function cached(key, ttl, fn) {
   return inflight;
 }
 
+function readJsonBody(req) {
+  if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH") return Promise.resolve(null);
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 1024 * 1024) {
+        reject(new Error("request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      if (!raw.trim()) return resolve(null);
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error("invalid json body"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
 /* ---------------- 路由 ---------------- */
 const routes = {
   "/api/quotes": async (q) =>
@@ -774,6 +1320,14 @@ const routes = {
   "/api/board-flow": async (q) => cached(`bf:${q.get("n")}`, 120000, () => handleBoardFlow(q.get("n") || "20")),
   "/api/stock-boards": async (q) =>
     cached(`sb:${q.get("code")}`, 24 * 3600 * 1000, () => handleStockBoards(q.get("code") || "")),
+  "/api/mystery-select": async (q) =>
+    q.get("refresh") === "1"
+      ? handleMysterySelect(q.get("query") || "", q.get("limit") || "30", q.get("page") || "1")
+      : cached(`mystery:${q.get("query")}:${q.get("limit")}:${q.get("page")}`, 5 * 60 * 1000, () =>
+        handleMysterySelect(q.get("query") || "", q.get("limit") || "30", q.get("page") || "1")
+      ),
+  "/api/chain-research": async (q) => handleChainResearch(q.get("topic") || "", q.get("refresh") || "0"),
+  "/api/chain-parse": async (_q, body) => handleChainParse(body || {}),
   "/api/news": async (q) =>
     cached(`news:${q.get("page")}:${q.get("size")}`, 8000, () =>
       handleNews(q.get("page") || "1", q.get("size") || "40")
@@ -802,7 +1356,8 @@ const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, "http://localhost");
     if (routes[u.pathname]) {
       try {
-        const data = await routes[u.pathname](u.searchParams);
+        const body = await readJsonBody(req);
+        const data = await routes[u.pathname](u.searchParams, body);
         send(res, 200, { ok: true, data, ts: Date.now() });
       } catch (e) {
         send(res, 502, { ok: false, error: String(e.message || e) });

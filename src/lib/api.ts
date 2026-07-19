@@ -109,6 +109,53 @@ export interface BoardFlow {
   points: { t: string; v: number }[];
 }
 
+export interface MysteryStrategy {
+  id: string;
+  name: string;
+  query: string;
+}
+
+export interface MysteryStock {
+  code: string;
+  name: string;
+  price?: number;
+  pct?: number;
+  ratio?: number;
+  avgAmount3?: number;
+  avgAmount20?: number;
+  rangePct5?: number;
+  raw: Record<string, unknown>;
+}
+
+export interface MysteryResult {
+  query: string;
+  total: number;
+  rows: MysteryStock[];
+  chunksInfo?: unknown;
+}
+
+export interface ParsedChainStock {
+  code: string;
+  name: string;
+  tag?: string;
+}
+
+export interface ParsedChainSegment {
+  name: string;
+  desc: string;
+  stocks: ParsedChainStock[];
+}
+
+export interface ParsedChain {
+  name: string;
+  segments: ParsedChainSegment[];
+  tech: string[];
+  keywords: string[];
+  source: "llm" | "local";
+  sourceModel?: string;
+  warnings?: string[];
+}
+
 export interface NewsItem {
   id: number;
   title: string;
@@ -143,9 +190,21 @@ const num = (v: unknown) => {
 
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(path);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.error || "api error");
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+  if (!j?.ok) throw new Error(j?.error || "api error");
+  return j.data as T;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+  if (!j?.ok) throw new Error(j?.error || "api error");
   return j.data as T;
 }
 
@@ -336,6 +395,10 @@ export const api = {
   stockFlow: (code: string) => flowLoader(code),
   futureMinute: (code: string) => get<MinuteData>(`/api/future-minute?code=${encodeURIComponent(code)}`),
   boardFlow: (n = 20) => get<BoardFlow[]>(`/api/board-flow?n=${n}`),
+  mysterySelect: (query: string, limit = 30, refresh = false) =>
+    get<MysteryResult>(`/api/mystery-select?query=${encodeURIComponent(query)}&limit=${limit}${refresh ? "&refresh=1" : ""}`),
+  parseChain: (name: string, content: string) =>
+    post<ParsedChain>(`/api/chain-parse`, { name, content }),
   news: (size = 60) => withFallback(() => get<NewsItem[]>(`/api/news?size=${size}`), () => directNews(size)),
   treasuries: () => get<Treasury[]>(`/api/treasuries`),
   treasuryHistory: () => get<TreasuryCurvePoint[]>(`/api/treasury-history`),

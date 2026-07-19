@@ -6,7 +6,10 @@ export function usePolling<T>(fn: () => Promise<T>, interval: number, deps: unkn
   const [error, setError] = useState<string | null>(null);
   const [updated, setUpdated] = useState(0);
   const fnRef = useRef(fn);
-  fnRef.current = fn;
+
+  useEffect(() => {
+    fnRef.current = fn;
+  }, [fn]);
 
   useEffect(() => {
     let dead = false;
