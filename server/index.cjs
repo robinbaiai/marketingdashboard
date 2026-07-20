@@ -368,7 +368,7 @@ function normalizeIwencaiStock(item) {
 
 async function handleMysterySelect(query, limit = "30", page = "1") {
   const apiKey = process.env.IWENCAI_API_KEY;
-  if (!apiKey) throw new Error("IWENCAI_API_KEY is not configured");
+  if (!apiKey) throw new Error("IWENCAI_NOT_CONFIGURED: IWENCAI_API_KEY is not configured");
   const base = (process.env.IWENCAI_BASE_URL || "https://openapi.iwencai.com").replace(/\/$/, "");
   const traceId = require("crypto").randomBytes(32).toString("hex");
   const payload = {
@@ -433,7 +433,7 @@ function writeJsonFile(file, data) {
 
 async function iwencaiRawQuery(query, { limit = "20", page = "1", skillId = "hithink-astock-selector" } = {}) {
   const apiKey = process.env.IWENCAI_API_KEY;
-  if (!apiKey) throw new Error("IWENCAI_API_KEY is not configured");
+  if (!apiKey) throw new Error("IWENCAI_NOT_CONFIGURED: IWENCAI_API_KEY is not configured");
   const base = (process.env.IWENCAI_BASE_URL || "https://openapi.iwencai.com").replace(/\/$/, "");
   const traceId = require("crypto").randomBytes(32).toString("hex");
   const payload = {

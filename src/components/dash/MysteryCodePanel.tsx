@@ -64,8 +64,14 @@ function loadResultCache(): Record<string, MysteryResult> {
 
 function errorMessage(error?: string | null) {
   if (!error) return "";
+  if (error.includes("IWENCAI_NOT_CONFIGURED") || error.includes("IWENCAI_API_KEY is not configured")) {
+    return "部署环境缺少 IWENCAI_API_KEY，请在部署平台的环境变量里配置，不要提交到 GitHub。";
+  }
   if (error.includes("IWENCAI_QUOTA_EXHAUSTED") || error.includes("次数已用完")) return "问财今日次数已用完，明日恢复或升级权益后可继续刷新。";
   if (error.includes("IWENCAI_AUTH_FAILED")) return "问财鉴权失败，请检查本机 IWENCAI_API_KEY。";
+  if (error.includes("api error") || error.includes("Failed to fetch") || error.includes("Unexpected token")) {
+    return "问财接口不可用，可能是部署环境没有启动 Node 后端或 API 路由不可达。";
+  }
   return error.replace(/^HTTP 502:?\s*/i, "");
 }
 
@@ -113,6 +119,11 @@ function ResultTable({
           </span>
         )}
       </div>
+      {error && (
+        <div className={`shrink-0 border-b border-rose-400/20 bg-rose-500/10 text-rose-200 ${zoom ? "px-4 py-2 text-[14px]" : "px-2 py-1.5 text-[10px]"}`}>
+          问财暂不可用：{errorMessage(error)}
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div
           className={`sticky top-0 z-10 grid gap-2 border-b border-slate-700/35 bg-[#08111f]/95 text-slate-500 backdrop-blur ${zoom ? "px-4 py-2 text-[14px]" : "px-2 py-1 text-[10px]"}`}
@@ -185,7 +196,7 @@ export function MysteryCodePanel({ className = "" }: { className?: string }) {
     setLoading(true);
     setError(null);
     try {
-      const next = await api.mysterySelect(query, 30);
+      const next = await api.mysterySelect(query, 30, true);
       setResult(next);
       setUpdated(Date.now());
       setResultCache((cache) => {
