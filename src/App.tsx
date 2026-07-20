@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Routes, Route } from "react-router";
 import { TickerTape, type TapeItem } from "@/components/dash/TickerTape";
 import { IndexPanel } from "@/components/dash/IndexPanel";
@@ -13,6 +13,26 @@ import { WatchlistPanel } from "@/components/dash/WatchlistPanel";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { INDICES, FOREX, COMMODITIES } from "@/config/dashboard";
+
+class PanelErrorBoundary extends Component<{ children: ReactNode; name: string }, { hasError: boolean; error: string }> {
+  state = { hasError: false, error: "" };
+  static getDerivedStateFromError(e: Error) {
+    return { hasError: true, error: e.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full items-center justify-center rounded border border-rose-500/30 bg-rose-500/5 p-4 text-center">
+          <div>
+            <div className="mb-1 text-[11px] font-semibold text-rose-400">面板异常：{this.props.name}</div>
+            <div className="text-[10px] text-slate-500">{this.state.error}</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function useClock() {
   const [now, setNow] = useState(new Date());
@@ -115,7 +135,9 @@ function Dashboard() {
         </div>
         {/* 第二行: 神秘代码 / 板块资金流 / 资金流 / 榜单 */}
         <div className="grid min-h-0 grid-cols-10 gap-1">
-          <MysteryCodePanel className="col-span-10 h-[420px] lg:h-auto lg:col-span-4" />
+          <PanelErrorBoundary name="MysteryCode">
+            <MysteryCodePanel className="col-span-10 h-[420px] lg:h-auto lg:col-span-4" />
+          </PanelErrorBoundary>
           <BoardFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
           <MoneyFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
           <RankPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
@@ -123,7 +145,9 @@ function Dashboard() {
         {/* 第三行:自选股 / 产业链 */}
         <div className="grid min-h-0 grid-cols-12 gap-1">
           <WatchlistPanel className="col-span-12 h-[400px] lg:h-auto lg:col-span-3" />
-          <ChainPanel className="col-span-12 h-[560px] lg:h-auto lg:col-span-9" />
+          <PanelErrorBoundary name="Chain">
+            <ChainPanel className="col-span-12 h-[560px] lg:h-auto lg:col-span-9" />
+          </PanelErrorBoundary>
         </div>
       </main>
     </div>
