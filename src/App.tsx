@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Routes, Route } from "react-router";
 import { TickerTape, type TapeItem } from "@/components/dash/TickerTape";
 import { IndexPanel } from "@/components/dash/IndexPanel";
@@ -23,7 +23,7 @@ function useClock() {
   return now;
 }
 
-function Header() {
+function Header({ tape }: { tape: ReactNode }) {
   const now = useClock();
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
@@ -32,8 +32,8 @@ function Header() {
   const week = ["日", "一", "二", "三", "四", "五", "六"][now.getDay()];
 
   return (
-    <header className="flex h-9 shrink-0 items-center gap-3 border-b border-slate-700/50 bg-gradient-to-r from-[#0a1424] via-[#0c1320] to-[#0a1424] px-3">
-      <div className="flex items-center gap-2.5">
+    <header className="flex h-9 shrink-0 items-center gap-3 overflow-hidden border-b border-slate-700/50 bg-gradient-to-r from-[#0a1424] via-[#0c1320] to-[#0a1424] px-3">
+      <div className="flex shrink-0 items-center gap-2.5">
         <div className="flex h-5.5 w-5.5 items-center justify-center rounded bg-gradient-to-br from-cyan-400 to-blue-600 text-[12px] font-black text-white shadow-[0_0_12px_rgba(34,211,238,0.45)]" style={{ height: 22, width: 22 }}>
           驾
         </div>
@@ -43,10 +43,10 @@ function Header() {
         </h1>
       </div>
       <div className="mx-1 h-4 w-px bg-slate-700" />
-      <div className="hidden items-center gap-3 text-[10px] text-slate-500 lg:flex">
-        <span>沪深港美 · 板块 · 资金流 · 选股 · 快讯 · 产业链</span>
+      <div className="min-w-0 flex-1 self-stretch">
+        {tape}
       </div>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         <span className="flex items-center gap-1.5 text-[10px] text-emerald-400">
           <span className="relative flex h-1.5 w-1.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
@@ -65,7 +65,7 @@ function Header() {
   );
 }
 
-function Tape() {
+function Tape({ compact = false }: { compact?: boolean }) {
   const codes = useMemo(() => [...INDICES.map((i) => i.code), ...FOREX.map((i) => i.code)], []);
   const { data: quotes } = usePolling(() => api.quotes(codes), 5000);
   const { data: futures } = usePolling(() => api.futures(), 10000);
@@ -95,15 +95,16 @@ function Tape() {
     return list;
   }, [quotes, futures, treasuries]);
 
-  if (items.length === 0) return <div className="h-7 border-b border-slate-700/40 bg-[#0a101c]" />;
-  return <TickerTape items={items} />;
+  if (items.length === 0) {
+    return compact ? <div className="h-full" /> : <div className="h-7 border-b border-slate-700/40 bg-[#0a101c]" />;
+  }
+  return <TickerTape items={items} compact={compact} />;
 }
 
 function Dashboard() {
   return (
     <div className="flex min-h-screen flex-col bg-[#070b12] text-slate-200 lg:h-screen lg:overflow-hidden">
-      <Header />
-      <Tape />
+      <Header tape={<Tape compact />} />
       {/* 一屏式大屏:三行网格,行高按比例分配 */}
       <main className="grid min-h-0 flex-1 gap-1 p-1 lg:grid-rows-[30fr_34fr_36fr]">
         {/* 第一行:指数 / 板块 / 快讯 */}

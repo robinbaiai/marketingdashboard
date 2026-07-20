@@ -77,12 +77,31 @@ function cleanChainOverrides(overrides: Record<string, Chain>) {
 }
 
 function marketCode(code: string) {
-  const c = String(code || "").trim().replace(/\D/g, "").slice(-6).padStart(6, "0");
+  const raw = String(code || "").trim().toLowerCase();
+  if (/^(hk|us)/.test(raw)) return "";
+  const c = raw.replace(/\D/g, "").slice(-6).padStart(6, "0");
   if (!c || c === "000000") return "";
   if (/^6/.test(c)) return `sh${c}`;
   if (/^[03]/.test(c)) return `sz${c}`;
   if (/^[489]/.test(c)) return `bj${c}`;
   return c;
+}
+
+function applyManualStockPatches(chain: Chain): Chain {
+  if (chain.name !== "超级节点") return chain;
+  const stock: ChainStock = { code: "sz300843", name: "胜蓝股份", tag: "高速连接器" };
+  const allCodes = new Set(chain.segments.flatMap((seg) => (seg.stocks || []).map((item) => marketCode(item.code))));
+  if (allCodes.has(stock.code)) return chain;
+
+  const targetIndex = chain.segments.findIndex((seg) => /上游|材料|设备|连接/.test(`${seg.name} ${seg.desc}`));
+  const index = targetIndex >= 0 ? targetIndex : 0;
+  return {
+    ...chain,
+    keywords: [...new Set([...chain.keywords, "超级节点", "高速连接器", "胜蓝股份"])],
+    segments: chain.segments.map((seg, i) => (
+      i === index ? { ...seg, stocks: [...(seg.stocks || []), stock] } : seg
+    )),
+  };
 }
 
 function rawList(row: MysteryStock, key: string) {
@@ -225,10 +244,11 @@ export function ChainPanel({ className = "" }: { className?: string }) {
   const [pendingDelete, setPendingDelete] = useState<Chain | null>(null);
   const [chainOrder, setChainOrder] = useState<string[]>(() => loadJson<string[]>(CHAIN_ORDER_KEY, []));
   const [draggingChainId, setDraggingChainId] = useState("");
-  const mergedBuiltInChains = useMemo(() => CHAINS.map((c) => chainOverrides[c.id] || c), [chainOverrides]);
+  const mergedBuiltInChains = useMemo(() => CHAINS.map((c) => applyManualStockPatches(chainOverrides[c.id] || c)), [chainOverrides]);
+  const patchedCustomChains = useMemo(() => customChains.map(applyManualStockPatches), [customChains]);
   const allChains = useMemo(
-    () => orderedChains([...mergedBuiltInChains, ...customChains].filter((c) => !hiddenChainIds.includes(c.id)), chainOrder),
-    [mergedBuiltInChains, customChains, hiddenChainIds, chainOrder]
+    () => orderedChains([...mergedBuiltInChains, ...patchedCustomChains].filter((c) => !hiddenChainIds.includes(c.id)), chainOrder),
+    [mergedBuiltInChains, patchedCustomChains, hiddenChainIds, chainOrder]
   );
   const activeChainId = allChains.some((c) => c.id === chainId) ? chainId : (allChains[0] || CHAINS[0]).id;
   const chain = allChains.find((c) => c.id === activeChainId) || allChains[0] || CHAINS[0];
@@ -304,7 +324,7 @@ export function ChainPanel({ className = "" }: { className?: string }) {
   const trendCodesKey = useMemo(() => trendCodes.join(","), [trendCodes]);
   const { data: trendData, error: trendError, updated: trendUpdated } = usePolling(
     () => trendCodes.length
-      ? api.trendMa(trendCodes, false)
+      ? api.trendMa(trendCodes, true)
       : Promise.resolve({ query: "本地MA筛选：当前价 > MA5 且 当前价 > MA20", total: 0, rows: [] }),
     60000,
     [activeChainId, trendCodesKey]

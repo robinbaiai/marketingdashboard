@@ -155,22 +155,38 @@ function avg(nums) {
 async function handleDailyKline(code, limit = 25) {
   const symbol = normalizeStockCode(code.slice(0, 2), code);
   if (!/^(sh|sz|bj)\d{6}$/.test(symbol)) return null;
+  const mapRows = (rows, source) => {
+    if (!Array.isArray(rows) || rows.length < 20) return null;
+    const mapped = rows
+      .map((r) => Array.isArray(r) ? r : String(r).split(","))
+      .map((r) => ({
+        source,
+        date: r[0],
+        open: num(r[1]),
+        close: num(r[2]),
+        high: num(r[3]),
+        low: num(r[4]),
+        volume: num(r[5]),
+      }))
+      .filter((r) => r.date && r.close > 0);
+    return mapped.length >= 20 ? mapped : null;
+  };
+
+  try {
+    const code6 = symbol.slice(2);
+    const secid = `${emMarketOf(symbol.slice(0, 2))}.${code6}`;
+    const fields = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61";
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=101&fqt=1&end=20500101&lmt=${limit}&fields1=f1,f2,f3,f4,f5,f6&fields2=${fields}`;
+    const rows = (await emGet(url))?.data?.klines || [];
+    const mapped = mapRows(rows, "eastmoney-kline");
+    if (mapped) return mapped;
+  } catch { /* 腾讯兜底 */ }
+
   const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(symbol)},day,,,${limit},qfq`;
-  const text = await fetchText(url, { timeout: 8000 });
+  const text = await curlText(url, { referer: `https://gu.qq.com/${symbol}/gp`, timeout: 8000, encoding: "utf-8" });
   const json = JSON.parse(text);
   const data = json?.data?.[symbol] || {};
-  const rows = data.qfqday || data.day || [];
-  if (!Array.isArray(rows) || rows.length < 20) return null;
-  return rows
-    .map((r) => ({
-      date: r[0],
-      open: num(r[1]),
-      close: num(r[2]),
-      high: num(r[3]),
-      low: num(r[4]),
-      volume: num(r[5]),
-    }))
-    .filter((r) => r.date && r.close > 0);
+  return mapRows(data.qfqday || data.day || [], "tencent-fqkline");
 }
 
 async function handleTrendMa(codesParam) {
@@ -208,7 +224,7 @@ async function handleTrendMa(codesParam) {
           amount: quote.amount,
           turnover: quote.turnover,
           raw: {
-            source: "tencent-fqkline",
+            source: last.source,
             lastKlineDate: last.date,
             lastClose: last.close,
             ma5: +ma5.toFixed(3),

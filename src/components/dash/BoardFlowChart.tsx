@@ -39,8 +39,10 @@ export function BoardFlowChart({ flows, progress = 1, zoom = false }: { flows: B
     const { w: W, h: H } = size;
     const labelW = zoom ? 190 : 108;
     const leftPad = zoom ? 58 : 34;
-    const topPad = zoom ? 14 : 8;
+    const topPad = zoom ? 32 : 18;
     const bottomPad = zoom ? 38 : 26;
+    const labelFontLayout = zoom ? 17 : 8.5;
+    const plotH = Math.max(40, H - topPad - bottomPad);
     const n = Math.max(...series.map((s) => s.points.length));
     // 重放进度: 只绘制前 idx 个点
     const idx = Math.max(1, Math.min(n - 1, Math.floor(progress * (n - 1))));
@@ -49,11 +51,12 @@ export function BoardFlowChart({ flows, progress = 1, zoom = false }: { flows: B
     const visibleV = visiblePoints.map((p) => p.v);
     let min = Math.min(...visibleV, 0);
     let max = Math.max(...visibleV, 0);
-    const pad = (max - min) * 0.04 || 1;
+    const range = max - min;
+    const pad = range * 0.1 || Math.max(Math.abs(max), Math.abs(min), 1) * 0.08;
     min -= pad;
     max += pad;
     const X = (i: number) => leftPad + (i / Math.max(n - 1, 1)) * (W - leftPad - labelW - 8);
-    const Y = (v: number) => topPad + (1 - (v - min) / (max - min)) * (H - bottomPad);
+    const Y = (v: number) => topPad + (1 - (v - min) / (max - min)) * plotH;
     // 颜色: 流入侧按暖色, 流出侧按高区分冷色, 并搭配虚线形态。
     let ri = 0;
     let gi = 0;
@@ -84,8 +87,12 @@ export function BoardFlowChart({ flows, progress = 1, zoom = false }: { flows: B
       l.labelY = Math.max(l.labelY, prevY + labelGap);
       prevY = l.labelY;
     }
-    const overflow = labels.length ? labels[labels.length - 1].labelY - (H - (zoom ? 30 : 18)) : 0;
+    const labelTop = topPad + labelFontLayout * 0.45;
+    const labelBottom = H - bottomPad - (zoom ? 2 : 0);
+    for (const l of labels) l.labelY = Math.max(l.labelY, labelTop);
+    const overflow = labels.length ? labels[labels.length - 1].labelY - labelBottom : 0;
     if (overflow > 0) for (const l of labels) l.labelY -= overflow;
+    for (const l of labels) l.labelY = Math.max(l.labelY, labelTop);
     // Y 刻度: 4 档
     const ticks = [0.2, 0.4, 0.6, 0.8].map((f) => {
       const v = max - f * (max - min);

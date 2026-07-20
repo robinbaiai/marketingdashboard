@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil } from "lucide-react";
 import { Panel } from "./Panel";
-import { api, type MysteryResult, type MysteryStrategy } from "@/lib/api";
+import { usePolling } from "@/hooks/usePolling";
+import { api, type MysteryResult, type MysteryStrategy, type Quote } from "@/lib/api";
 import { clsChg, fmtPct, fmtPrice, fmtYuan } from "@/lib/format";
 import { Spinner } from "@/components/ui/spinner";
 import { StockLink } from "./StockLink";
@@ -29,6 +30,15 @@ const TABLE_COLS = {
   base: "62px minmax(96px,1fr) 64px 64px 86px 86px 72px",
   zoom: "72px minmax(112px,1fr) 68px 78px 90px 84px 76px",
 };
+
+function marketCode(code: string) {
+  const c = String(code || "").trim().replace(/\D/g, "").slice(-6).padStart(6, "0");
+  if (!c || c === "000000") return "";
+  if (/^6/.test(c)) return `sh${c}`;
+  if (/^[03]/.test(c)) return `sz${c}`;
+  if (/^[489]/.test(c)) return `bj${c}`;
+  return c;
+}
 
 function loadStrategies(): MysteryStrategy[] {
   try {
@@ -59,7 +69,21 @@ function errorMessage(error?: string | null) {
   return error.replace(/^HTTP 502:?\s*/i, "");
 }
 
-function ResultTable({ result, loading, error, stale = false, zoom = false }: { result: MysteryResult | null; loading: boolean; error?: string | null; stale?: boolean; zoom?: boolean }) {
+function ResultTable({
+  result,
+  quotes,
+  loading,
+  error,
+  stale = false,
+  zoom = false,
+}: {
+  result: MysteryResult | null;
+  quotes?: Record<string, Quote> | null;
+  loading: boolean;
+  error?: string | null;
+  stale?: boolean;
+  zoom?: boolean;
+}) {
   if (loading && !result) {
     return (
       <div className={`flex h-full flex-col items-center justify-center gap-3 text-slate-500 ${zoom ? "text-[18px]" : "text-[11px]"}`}>
@@ -83,7 +107,11 @@ function ResultTable({ result, loading, error, stale = false, zoom = false }: { 
     <div className="flex h-full min-h-0 flex-col">
       <div className={`shrink-0 border-b border-slate-700/35 text-slate-500 ${zoom ? "px-4 py-3 text-[14px]" : "px-2 py-1 text-[10px]"}`}>
         同花顺问财 · 共 {result.total} 条
-        {stale && <span className="ml-2 text-amber-300/85">显示上次成功缓存 · {errorMessage(error)}</span>}
+        {stale && (
+          <span className="ml-2 text-amber-300/85">
+            显示上次成功缓存{error ? ` · ${errorMessage(error)}` : ""}
+          </span>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div
@@ -92,21 +120,26 @@ function ResultTable({ result, loading, error, stale = false, zoom = false }: { 
         >
           <span>代码</span><span>名称</span><span className="text-right">现价</span><span className="text-right">涨跌</span><span className="text-right">3日均额</span><span className="text-right">放量倍数</span><span className="text-right">5日涨幅</span>
         </div>
-        {result.rows.map((row) => (
-          <div
-            key={`${row.code}-${row.name}`}
-            className={`grid items-center gap-2 border-b border-slate-800/60 transition hover:bg-slate-800/35 ${zoom ? "px-4 py-3 text-[17px]" : "px-2 py-1.5 text-[11px]"}`}
-            style={{ gridTemplateColumns: zoom ? TABLE_COLS.zoom : TABLE_COLS.base }}
-          >
-            <StockLink code={row.code} className="text-slate-500" style={TNUM} />
-            <span className="min-w-0 truncate font-semibold text-slate-200">{row.name}</span>
-            <span className="text-right text-slate-300" style={TNUM}>{row.price != null ? fmtPrice(row.price) : "—"}</span>
-            <span className={`text-right font-semibold ${row.pct != null ? clsChg(row.pct) : "text-slate-600"}`} style={TNUM}>{row.pct != null ? fmtPct(row.pct) : "—"}</span>
-            <span className="text-right text-slate-300" style={TNUM}>{row.avgAmount3 != null ? fmtYuan(row.avgAmount3) : "—"}</span>
-            <span className="text-right font-semibold text-cyan-300" style={TNUM}>{row.ratio != null ? `${row.ratio.toFixed(2)}x` : "—"}</span>
-            <span className={`text-right ${row.rangePct5 != null ? clsChg(row.rangePct5) : "text-slate-600"}`} style={TNUM}>{row.rangePct5 != null ? fmtPct(row.rangePct5) : "—"}</span>
-          </div>
-        ))}
+        {result.rows.map((row) => {
+          const live = quotes?.[marketCode(row.code)];
+          const price = live?.price || row.price;
+          const pct = live?.pct ?? row.pct;
+          return (
+            <div
+              key={`${row.code}-${row.name}`}
+              className={`grid items-center gap-2 border-b border-slate-800/60 transition hover:bg-slate-800/35 ${zoom ? "px-4 py-3 text-[17px]" : "px-2 py-1.5 text-[11px]"}`}
+              style={{ gridTemplateColumns: zoom ? TABLE_COLS.zoom : TABLE_COLS.base }}
+            >
+              <StockLink code={row.code} className="text-slate-500" style={TNUM} />
+              <span className="min-w-0 truncate font-semibold text-slate-200">{row.name}</span>
+              <span className="text-right text-slate-300" style={TNUM}>{price != null ? fmtPrice(price) : "—"}</span>
+              <span className={`text-right font-semibold ${pct != null ? clsChg(pct) : "text-slate-600"}`} style={TNUM}>{pct != null ? fmtPct(pct) : "—"}</span>
+              <span className="text-right text-slate-300" style={TNUM}>{row.avgAmount3 != null ? fmtYuan(row.avgAmount3) : "—"}</span>
+              <span className="text-right font-semibold text-cyan-300" style={TNUM}>{row.ratio != null ? `${row.ratio.toFixed(2)}x` : "—"}</span>
+              <span className={`text-right ${row.rangePct5 != null ? clsChg(row.rangePct5) : "text-slate-600"}`} style={TNUM}>{row.rangePct5 != null ? fmtPct(row.rangePct5) : "—"}</span>
+            </div>
+          );
+        })}
         {result.rows.length === 0 && (
           <div className={`p-6 text-center text-slate-600 ${zoom ? "text-[16px]" : "text-[11px]"}`}>该策略暂无结果，可尝试放宽条件。</div>
         )}
@@ -130,8 +163,18 @@ export function MysteryCodePanel({ className = "" }: { className?: string }) {
   const query = selected?.query || DEFAULT_STRATEGIES[0].query;
   const activeResult = result?.query === query ? result : null;
   const cachedResult = resultCache[selected?.id || ""]?.query === query ? resultCache[selected?.id || ""] : null;
-  const visibleResult = activeResult || (error ? cachedResult : null);
+  const visibleResult = activeResult || cachedResult || null;
   const isLoading = loading && !visibleResult;
+  const quoteCodes = useMemo(
+    () => [...new Set((visibleResult?.rows || []).map((row) => marketCode(row.code)).filter(Boolean))],
+    [visibleResult]
+  );
+  const quoteCodesKey = quoteCodes.join(",");
+  const { data: liveQuotes } = usePolling(
+    () => quoteCodes.length ? api.quotes(quoteCodes) : Promise.resolve({} as Record<string, Quote>),
+    5000,
+    [quoteCodesKey]
+  );
 
   useEffect(() => {
     localStorage.setItem(LS_KEY, JSON.stringify(strategies));
@@ -313,7 +356,14 @@ export function MysteryCodePanel({ className = "" }: { className?: string }) {
         </div>
       </div>
       <div className="min-w-0 flex-1">
-        <ResultTable result={visibleResult} loading={isLoading} error={error} stale={!activeResult && Boolean(visibleResult && error)} zoom={zoom} />
+        <ResultTable
+          result={visibleResult}
+          quotes={liveQuotes}
+          loading={isLoading}
+          error={error}
+          stale={Boolean(visibleResult && (!activeResult || error))}
+          zoom={zoom}
+        />
       </div>
     </div>
   );
