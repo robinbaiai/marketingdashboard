@@ -146,6 +146,91 @@ async function handleMinute(code) {
   return { code, prec, points: pts };
 }
 
+/* ---------------- 个股日K均线筛选(本地计算,不消耗问财) ---------------- */
+function avg(nums) {
+  if (!nums.length) return 0;
+  return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+}
+
+async function handleDailyKline(code, limit = 25) {
+  const symbol = normalizeStockCode(code.slice(0, 2), code);
+  if (!/^(sh|sz|bj)\d{6}$/.test(symbol)) return null;
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(symbol)},day,,,${limit},qfq`;
+  const text = await fetchText(url, { timeout: 8000 });
+  const json = JSON.parse(text);
+  const data = json?.data?.[symbol] || {};
+  const rows = data.qfqday || data.day || [];
+  if (!Array.isArray(rows) || rows.length < 20) return null;
+  return rows
+    .map((r) => ({
+      date: r[0],
+      open: num(r[1]),
+      close: num(r[2]),
+      high: num(r[3]),
+      low: num(r[4]),
+      volume: num(r[5]),
+    }))
+    .filter((r) => r.date && r.close > 0);
+}
+
+async function handleTrendMa(codesParam) {
+  const list = [...new Set(String(codesParam || "")
+    .toLowerCase()
+    .split(",")
+    .map((s) => normalizeStockCode(s.slice(0, 2), s))
+    .filter((s) => /^(sh|sz|bj)\d{6}$/.test(s)))]
+    .slice(0, 120);
+  if (!list.length) return { query: "本地MA筛选：当前价 > MA5 且 当前价 > MA20", total: 0, rows: [] };
+
+  const quotes = await handleQuotes(list.join(","));
+  const rows = [];
+  for (let i = 0; i < list.length; i += 8) {
+    const chunk = list.slice(i, i + 8);
+    const partial = await Promise.all(chunk.map(async (code) => {
+      try {
+        const kline = await cached(`dk:${code}`, 5 * 60 * 1000, () => handleDailyKline(code, 28));
+        if (!kline || kline.length < 20) return null;
+        const closes = kline.map((r) => r.close).filter((v) => v > 0);
+        if (closes.length < 20) return null;
+        const quote = quotes[code] || {};
+        const last = kline[kline.length - 1];
+        const price = num(quote.price) || last.close;
+        const ma5 = avg(closes.slice(-5));
+        const ma20 = avg(closes.slice(-20));
+        if (!(price > ma5 && price > ma20)) return null;
+        return {
+          code,
+          name: quote.name || code,
+          price: +price.toFixed(3),
+          pct: Number.isFinite(quote.pct) ? quote.pct : undefined,
+          ma5: +ma5.toFixed(3),
+          ma20: +ma20.toFixed(3),
+          amount: quote.amount,
+          turnover: quote.turnover,
+          raw: {
+            source: "tencent-fqkline",
+            lastKlineDate: last.date,
+            lastClose: last.close,
+            ma5: +ma5.toFixed(3),
+            ma20: +ma20.toFixed(3),
+          },
+        };
+      } catch {
+        return null;
+      }
+    }));
+    rows.push(...partial.filter(Boolean));
+    if (i + 8 < list.length) await sleep(80);
+  }
+
+  rows.sort((a, b) => num(b.amount) - num(a.amount));
+  return {
+    query: "本地MA筛选：当前价 > MA5 且 当前价 > MA20",
+    total: list.length,
+    rows,
+  };
+}
+
 /* ---------------- 腾讯板块榜(行业 t=01 / 概念 t=02) ---------------- */
 async function handleBoards(type, dir, n) {
   const url = `https://ifzq.gtimg.cn/appstock/app/mktHs/rank?l=${n}&p=1&t=${type}/averatio&o=${dir}`;
@@ -1320,6 +1405,10 @@ const routes = {
   "/api/board-flow": async (q) => cached(`bf:${q.get("n")}`, 120000, () => handleBoardFlow(q.get("n") || "20")),
   "/api/stock-boards": async (q) =>
     cached(`sb:${q.get("code")}`, 24 * 3600 * 1000, () => handleStockBoards(q.get("code") || "")),
+  "/api/trend-ma": async (q) =>
+    q.get("refresh") === "1"
+      ? handleTrendMa(q.get("codes") || "")
+      : cached(`trend-ma:${q.get("codes")}`, 60 * 1000, () => handleTrendMa(q.get("codes") || "")),
   "/api/mystery-select": async (q) =>
     q.get("refresh") === "1"
       ? handleMysterySelect(q.get("query") || "", q.get("limit") || "30", q.get("page") || "1")

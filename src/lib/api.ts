@@ -134,6 +134,24 @@ export interface MysteryResult {
   chunksInfo?: unknown;
 }
 
+export interface TrendMaStock {
+  code: string;
+  name: string;
+  price: number;
+  pct?: number;
+  ma5: number;
+  ma20: number;
+  amount?: number;
+  turnover?: number;
+  raw: Record<string, unknown>;
+}
+
+export interface TrendMaResult {
+  query: string;
+  total: number;
+  rows: TrendMaStock[];
+}
+
 export interface ParsedChainStock {
   code: string;
   name: string;
@@ -397,6 +415,8 @@ export const api = {
   boardFlow: (n = 20) => get<BoardFlow[]>(`/api/board-flow?n=${n}`),
   mysterySelect: (query: string, limit = 30, refresh = false) =>
     get<MysteryResult>(`/api/mystery-select?query=${encodeURIComponent(query)}&limit=${limit}${refresh ? "&refresh=1" : ""}`),
+  trendMa: (codes: string[], refresh = false) =>
+    get<TrendMaResult>(`/api/trend-ma?codes=${encodeURIComponent(codes.join(","))}${refresh ? "&refresh=1" : ""}`),
   parseChain: (name: string, content: string) =>
     post<ParsedChain>(`/api/chain-parse`, { name, content }),
   news: (size = 60) => withFallback(() => get<NewsItem[]>(`/api/news?size=${size}`), () => directNews(size)),

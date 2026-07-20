@@ -22,17 +22,7 @@ interface DynamicSegment {
 const CUSTOM_CHAINS_KEY = "market-dashboard.custom-chains.v1";
 const HIDDEN_CHAINS_KEY = "market-dashboard.hidden-chains.v1";
 const CHAIN_OVERRIDES_KEY = "market-dashboard.chain-overrides.v1";
-const CHAIN_TREND_CACHE_KEY = "market-dashboard.chain-trend-select.v1";
 const CHAIN_ORDER_KEY = "market-dashboard.chain-order.v1";
-
-interface TrendCacheEntry {
-  chainId: string;
-  chainName: string;
-  query: string;
-  updatedAt: number;
-  total: number;
-  rows: MysteryStock[];
-}
 
 function loadJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -76,8 +66,11 @@ function chainFromParsed(parsed: ParsedChain, base?: Chain): Chain {
 
 function cleanChainOverrides(overrides: Record<string, Chain>) {
   return Object.fromEntries(
-    Object.entries(overrides).filter(([, chain]) => {
+    Object.entries(overrides).filter(([id, chain]) => {
       const stocks = chain.segments.flatMap((seg) => seg.stocks || []);
+      if (id === "solid-battery" && !stocks.some((stock) => stock.name === "天奈科技" || marketCode(stock.code) === "sh688116")) {
+        return false;
+      }
       return !stocks.some((stock) => stock.source === "local");
     })
   );
@@ -230,9 +223,6 @@ export function ChainPanel({ className = "" }: { className?: string }) {
   const [editor, setEditor] = useState<{ mode: "add" | "update"; name: string; content: string } | null>(null);
   const [parseState, setParseState] = useState<{ loading: boolean; error: string; warnings: string[] }>({ loading: false, error: "", warnings: [] });
   const [pendingDelete, setPendingDelete] = useState<Chain | null>(null);
-  const [trendCache, setTrendCache] = useState<Record<string, TrendCacheEntry>>(() => loadJson<Record<string, TrendCacheEntry>>(CHAIN_TREND_CACHE_KEY, {}));
-  const [trendLoading, setTrendLoading] = useState(false);
-  const [trendError, setTrendError] = useState("");
   const [chainOrder, setChainOrder] = useState<string[]>(() => loadJson<string[]>(CHAIN_ORDER_KEY, []));
   const [draggingChainId, setDraggingChainId] = useState("");
   const mergedBuiltInChains = useMemo(() => CHAINS.map((c) => chainOverrides[c.id] || c), [chainOverrides]);
@@ -254,10 +244,6 @@ export function ChainPanel({ className = "" }: { className?: string }) {
   useEffect(() => {
     saveJson(HIDDEN_CHAINS_KEY, hiddenChainIds);
   }, [hiddenChainIds]);
-
-  useEffect(() => {
-    saveJson(CHAIN_TREND_CACHE_KEY, trendCache);
-  }, [trendCache]);
 
   useEffect(() => {
     saveJson(CHAIN_ORDER_KEY, chainOrder);
@@ -313,8 +299,27 @@ export function ChainPanel({ className = "" }: { className?: string }) {
     [dynamicSegments, chain]
   );
   const trendQuery = useMemo(() => buildTrendQuery(segmentData), [segmentData]);
-  const trendResult = trendCache[chain.id];
   const codes = useMemo(() => segmentData.flatMap((s) => s.stocks.map((x) => x.code)), [segmentData]);
+  const trendCodes = useMemo(() => [...new Set(codes.map(marketCode).filter(Boolean))], [codes]);
+  const trendCodesKey = useMemo(() => trendCodes.join(","), [trendCodes]);
+  const { data: trendData, error: trendError, updated: trendUpdated } = usePolling(
+    () => trendCodes.length
+      ? api.trendMa(trendCodes, false)
+      : Promise.resolve({ query: "本地MA筛选：当前价 > MA5 且 当前价 > MA20", total: 0, rows: [] }),
+    60000,
+    [activeChainId, trendCodesKey]
+  );
+  const trendLoading = trendCodes.length > 0 && !trendData && !trendError;
+  const trendResult = trendData
+    ? {
+      chainId: chain.id,
+      chainName: chain.name,
+      query: trendData.query,
+      updatedAt: trendUpdated,
+      total: trendData.total,
+      rows: trendData.rows,
+    }
+    : null;
   const { data: quotes } = usePolling(
     () => (codes.length ? api.quotes(codes) : Promise.resolve({} as Record<string, Quote>)),
     8000,
@@ -425,30 +430,6 @@ export function ChainPanel({ className = "" }: { className?: string }) {
     );
   };
 
-  const runTrendSelect = async () => {
-    if (trendLoading || !trendQuery) return;
-    setTrendLoading(true);
-    setTrendError("");
-    try {
-      const result = await api.mysterySelect(trendQuery, 80, true);
-      setTrendCache((cache) => ({
-        ...cache,
-        [chain.id]: {
-          chainId: chain.id,
-          chainName: chain.name,
-          query: trendQuery,
-          updatedAt: Date.now(),
-          total: result.total,
-          rows: result.rows,
-        },
-      }));
-    } catch (error) {
-      setTrendError(String(error instanceof Error ? error.message : error));
-    } finally {
-      setTrendLoading(false);
-    }
-  };
-
   const content = (zoom = false) => (
     <div className="flex h-full min-h-0">
       {/* 上中下游三段 */}
@@ -517,21 +498,18 @@ export function ChainPanel({ className = "" }: { className?: string }) {
         <div className={`border-b border-slate-700/40 ${zoom ? "p-4" : "p-2"}`}>
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className={`font-semibold text-slate-300 ${zoom ? "text-[16px]" : "text-[10px]"}`}>趋势选股</div>
-            <button
-              type="button"
-              onClick={runTrendSelect}
-              disabled={trendLoading || !trendQuery}
-              className={`shrink-0 rounded border border-cyan-500/25 bg-cyan-500/10 font-semibold text-cyan-300 transition hover:border-cyan-400/50 hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-50 ${
-                zoom ? "px-2.5 py-1 text-[13px]" : "px-1.5 py-0.5 text-[9px]"
+            <span
+              className={`shrink-0 rounded border border-cyan-500/20 bg-cyan-500/10 font-semibold text-cyan-300 ${
+                zoom ? "px-2.5 py-1 text-[12px]" : "px-1.5 py-0.5 text-[8.5px]"
               }`}
-              title={trendQuery || "当前产业链暂无股票可查询"}
+              title={trendQuery ? "自动本地计算：当前价同时站上5日和20日均线，不消耗问财额度" : "当前产业链暂无股票可查询"}
             >
-              {trendLoading ? "查询中" : "查询"}
-            </button>
+              {trendLoading ? "自动计算中" : "自动"}
+            </span>
           </div>
           <div className={`rounded border border-slate-700/30 bg-slate-950/35 ${zoom ? "p-2" : "p-1.5"}`}>
             <div className={`mb-1 flex items-center justify-between gap-2 text-slate-500 ${zoom ? "text-[12px]" : "text-[8.5px]"}`}>
-              <span>5日 / 20日均线上方</span>
+              <span>本地 MA5 / MA20 上方</span>
               {trendResult && <span>{shortTime(trendResult.updatedAt)} · {trendResult.rows.length}/{trendResult.total || trendResult.rows.length}</span>}
             </div>
             <div className={`${zoom ? "max-h-44 space-y-1" : "max-h-20 space-y-0.5"} overflow-y-auto`}>
@@ -548,7 +526,7 @@ export function ChainPanel({ className = "" }: { className?: string }) {
               ))}
               {!trendResult && !trendError && (
                 <div className={`text-slate-500 ${zoom ? "text-[12px] leading-5" : "text-[8.5px] leading-4"}`}>
-                  点击查询后，从当前上中下游股票中筛选站上5日和20日均线的标的。
+                  {trendLoading ? "正在用日K本地计算 MA5/MA20..." : "切换产业链后会自动计算 MA5/MA20，不消耗问财额度。"}
                 </div>
               )}
               {trendResult && trendResult.rows.length === 0 && (
@@ -564,7 +542,7 @@ export function ChainPanel({ className = "" }: { className?: string }) {
         </div>
         <div className={`min-h-0 flex-1 overflow-y-auto ${zoom ? "p-3" : "p-1.5"}`}>
           <div className={`mb-2 px-0.5 font-semibold text-slate-300 ${zoom ? "text-[16px]" : "text-[10px]"}`}>
-            动态发现线索 <span className={`ml-1 font-normal text-slate-500 ${zoom ? "text-[13px]" : "text-[9px]"}`}>问财选股 · 30min</span>
+            动态发现线索 <span className={`ml-1 font-normal text-slate-500 ${zoom ? "text-[13px]" : "text-[9px]"}`}>产业链刷新才用问财 · 30min</span>
           </div>
           <div className={zoom ? "space-y-2" : "space-y-1"}>
             {segmentData.map((seg) => (
