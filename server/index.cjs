@@ -124,6 +124,29 @@ async function handleQuotes(codes) {
     const q = parseTencentLine(line.trim());
     if (q) out[q.symbol] = q;
   }
+  // usVIX 腾讯数据已停更，从新浪期货获取实时值覆盖
+  if (codes.includes("usVIX") || out.usVIX) {
+    try {
+      const vixText = await curlText("https://hq.sinajs.cn/list=hf_VX", { referer: "https://finance.sina.com.cn/futures/", timeout: 4000, encoding: "utf-8" });
+      const m = vixText.match(/hf_VX="([^"]*)"/);
+      if (m) {
+        const f = m[1].split(",");
+        const price = parseFloat(f[0]);
+        const prev = parseFloat(f[7]);
+        if (!isNaN(price)) {
+          out.usVIX = {
+            symbol: "usVIX",
+            name: "VIX恐慌指数期货",
+            price,
+            prev,
+            change: +(price - prev).toFixed(4),
+            pct: prev ? +(((price - prev) / prev) * 100).toFixed(3) : 0,
+            time: `${f[12]} ${f[6]}`,
+          };
+        }
+      }
+    } catch { /* keep tencent fallback */ }
+  }
   return out;
 }
 
@@ -1337,6 +1360,62 @@ async function handleTreasuryHistory() {
     .map(([, v]) => v);
 }
 
+/* ---------------- 美股热门榜单(Tencent 批量查询) ---------------- */
+const US_STOCKS = [
+  // ETFs
+  "usSPY", "usQQQ", "usDIA", "usIWM",
+  // Tech
+  "usAAPL", "usNVDA", "usMSFT", "usGOOGL", "usAMZN", "usMETA", "usTSLA",
+  "usAVGO", "usORCL", "usCRM", "usADBE", "usAMD", "usINTC",
+  "usQCOM", "usTXN", "usMU", "usAMAT", "usLRCX", "usKLAC",
+  // Consumer
+  "usWMT", "usKO", "usPG", "usPEP", "usCOST", "usNKE", "usMCD", "usSBUX", "usHD", "usLOW",
+  // Finance
+  "usJPM", "usBAC", "usGS", "usV", "usMA", "usAXP", "usBLK", "usBRKB",
+  // Healthcare
+  "usUNH", "usJNJ", "usLLY", "usPFE", "usABBV", "usMRK", "usTMO", "usABT",
+  // Energy
+  "usXOM", "usCVX", "usCOP", "usSLB",
+  // Industrial
+  "usCAT", "usBA", "usGE", "usHON", "usUPS", "usUNP", "usRTX",
+  // Communication
+  "usNFLX", "usDIS", "usT", "usVZ", "usCMCSA",
+  // Semis
+  "usASML", "usSNPS", "usCDNS",
+];
+
+async function handleUsRank(sort) {
+  const codes = US_STOCKS.join(",");
+  const text = await fetchText(`https://qt.gtimg.cn/q=${encodeURIComponent(codes)}`, { gbk: true });
+  const list = [];
+  for (const line of text.split(";")) {
+    const m = line.match(/v_(\w+)="([^"]*)"/);
+    if (!m) continue;
+    const f = m[2].split("~");
+    if (f.length < 40) continue;
+    const price = num(f[3]);
+    list.push({
+      symbol: m[1],
+      ticker: f[2].split(".")[0],
+      name: f[1],
+      price,
+      change: num(f[31]),
+      pct: num(f[32]),
+      high: num(f[33]),
+      low: num(f[34]),
+      amount: num(f[37]),  // 万元
+      turnover: num(f[38]),
+      time: f[30],
+    });
+  }
+  // 默认按涨跌幅排序, 有涨有跌的在前
+  if (sort === "amount") list.sort((a, b) => b.amount - a.amount);
+  else if (sort === "up") list.sort((a, b) => b.pct - a.pct);
+  else if (sort === "down") list.sort((a, b) => a.pct - b.pct);
+  else list.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)); // 活跃
+  return list;
+}
+
 /* ---------------- TTL 缓存 + 并发合并(防上游限流) ---------------- */
 const cache = new Map();
 async function cached(key, ttl, fn) {
@@ -1400,7 +1479,7 @@ const routes = {
       handleBoardStocks(q.get("code") || "", q.get("dir") || "down", q.get("n") || "10")
     ),
   "/api/futures": async (q) =>
-    cached(`futures:${q.get("list")}`, 15000, () => handleFutures(q.get("list") || "hf_GC,hf_XAU,hf_SI,hf_CAD,hf_CL,nf_AU0,BTCUSDT")),
+    cached(`futures:${q.get("list")}`, 15000, () => handleFutures(q.get("list") || "hf_GC,hf_XAU,hf_SI,hf_CAD,hf_CL,hf_VX,nf_AU0,BTCUSDT")),
   "/api/future-minute": async (q) =>
     cached(`fmin:${q.get("code")}`, 60000, () => handleFutureMinute(q.get("code") || "")),
   "/api/rank": async (q) =>
@@ -1439,6 +1518,8 @@ const routes = {
     ),
   "/api/treasuries": async () => cached("treasuries", 30000, () => handleTreasuries()),
   "/api/treasury-history": async () => cached("treasury-history", 6 * 3600 * 1000, () => handleTreasuryHistory()),
+  "/api/us-rank": async (q) =>
+    cached(`us-rank:${q.get("sort") || "active"}`, 5000, () => handleUsRank(q.get("sort") || "active")),
   "/api/health": async () => ({ status: "up", ts: Date.now(), cache: cache.size }),
 };
 

@@ -19,6 +19,7 @@ export const INDICES: IndexDef[] = [
   { code: "usIXIC", label: "纳斯达克", region: "US" },
   { code: "usINX", label: "标普500", region: "US" },
   { code: "usVIX", label: "恐慌指数", region: "US" },
+  { code: "usSOXX", label: "费城半导体", region: "US" },
 ];
 
 export const FOREX: IndexDef[] = [{ code: "whUSDCNY", label: "美元/人民币", region: "FX" }];
@@ -37,6 +38,7 @@ export const COMMODITIES: CommodityDef[] = [
   { code: "hf_SI", label: "纽约白银", unit: "COMEX · 美元/盎司", accent: "#c0d0e0" },
   { code: "hf_CAD", label: "LME伦铜", unit: "美元/吨", accent: "#e8833a" },
   { code: "hf_CL", label: "NYMEX原油", unit: "美元/桶", accent: "#5aa9e6" },
+  { code: "hf_VX", label: "恐慌指数", unit: "CBOE · VIX期货", accent: "#e05050" },
   { code: "BTCUSDT", label: "BTC/USDT", unit: "美元", accent: "#f7931a" },
 ];
 

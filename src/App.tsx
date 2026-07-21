@@ -10,6 +10,7 @@ import { MysteryCodePanel } from "@/components/dash/MysteryCodePanel";
 import { NewsPanel } from "@/components/dash/NewsPanel";
 import { ChainPanel } from "@/components/dash/ChainPanel";
 import { WatchlistPanel } from "@/components/dash/WatchlistPanel";
+import { USRankPanel } from "@/components/dash/USRankPanel";
 import { usePolling } from "@/hooks/usePolling";
 import { api } from "@/lib/api";
 import { INDICES, FOREX, COMMODITIES } from "@/config/dashboard";
@@ -138,9 +139,12 @@ function Dashboard() {
           <PanelErrorBoundary name="MysteryCode">
             <MysteryCodePanel className="col-span-10 h-[420px] lg:h-auto lg:col-span-4" />
           </PanelErrorBoundary>
+          <PanelErrorBoundary name="USRank">
+            <USRankPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
+          </PanelErrorBoundary>
           <BoardFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
           <MoneyFlowPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
-          <RankPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2" />
+          <RankPanel className="col-span-10 h-[340px] lg:h-auto lg:col-span-2 lg:col-start-9" />
         </div>
         {/* 第三行:自选股 / 产业链 */}
         <div className="grid min-h-0 grid-cols-12 gap-1">

@@ -604,6 +604,58 @@ export function ChainPanel({ className = "" }: { className?: string }) {
     setPendingDelete(null);
   };
 
+  const autoFetchChain = async () => {
+    if (!editor || parseState.loading) return;
+    const name = editor.name.trim();
+    if (!name) {
+      setParseState({ loading: false, error: "请先填写产业链标题", warnings: [] });
+      return;
+    }
+    setParseState({ loading: true, error: "", warnings: [] });
+    try {
+      const result = await api.chainResearch(name, true);
+      const rows = result.rows || [];
+      // 按概念关键词粗分上中下游
+      const upKeywords = ["材料", "设备", "原料", "矿产", "化学", "能源", "硅", "锂", "稀土"];
+      const downKeywords = ["应用", "终端", "消费", "汽车", "手机", "运营", "服务", "系统", "解决方案"];
+      const up: string[] = [], mid: string[] = [], down: string[] = [];
+      for (const r of rows) {
+        const stockName = String(r["股票简称"] || r.name || "");
+        const code = String(r["股票代码"] || r.code || "");
+        const concepts = Array.isArray(r["所属概念"]) ? (r["所属概念"] as string[]).join(" ") : "";
+        const entry = `${stockName}（${code}）`;
+        if (upKeywords.some((k) => concepts.includes(k))) up.push(entry);
+        else if (downKeywords.some((k) => concepts.includes(k))) down.push(entry);
+        else mid.push(entry);
+        if (up.length + mid.length + down.length >= 60) break;
+      }
+      // 保证每段至少有几只
+      const fallback = (arr: string[], all: typeof rows) =>
+        arr.length >= 3 ? arr : all.map((r) => `${r["股票简称"] || r.name || ""}（${r["股票代码"] || r.code || ""}）`).slice(0, 8);
+      const upStocks = fallback(up, rows).join("、");
+      const midStocks = fallback(mid, rows).join("、");
+      const downStocks = fallback(down, rows).join("、");
+
+      const summary = `${name}产业链
+
+上游·材料/设备：
+${upStocks}
+
+中游·制造/封测：
+${midStocks}
+
+下游·应用/终端：
+${downStocks}
+
+核心逻辑：${name}产业链覆盖从原材料到终端应用的完整环节。
+数据来源：同花顺问财 | 共 ${result.codeCount} 只关联股票`;
+      setEditor((cur) => cur && { ...cur, content: summary });
+      setParseState({ loading: false, error: "", warnings: [`已从问财获取 ${result.codeCount} 只关联股票，按概念关键词粗分上中下游，请核验后点击"整理并保存"`] });
+    } catch (e) {
+      setParseState({ loading: false, error: `问财查询失败：${e instanceof Error ? e.message : String(e)}`, warnings: [] });
+    }
+  };
+
   const submitEditor = async () => {
     if (!editor || parseState.loading) return;
     const name = editor.name.trim();
@@ -743,6 +795,14 @@ export function ChainPanel({ className = "" }: { className?: string }) {
             <div className="flex items-center justify-between border-t border-slate-700/45 px-4 py-3">
               <div className="text-[12px] text-slate-500">股票名会自动补代码；无法确认代码的股票不会强行加入。</div>
               <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={autoFetchChain}
+                  disabled={parseState.loading}
+                  className="rounded border border-emerald-400/40 bg-emerald-500/12 px-3 py-1.5 text-[13px] font-semibold text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {parseState.loading ? "查询中..." : "⚡ 自动从问财生成"}
+                </button>
                 <button
                   type="button"
                   onClick={() => setEditor(null)}

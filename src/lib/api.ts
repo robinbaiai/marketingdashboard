@@ -195,6 +195,18 @@ export interface TreasuryCurvePoint {
   yields: Record<string, number>; // US3M..US30Y -> 收益率(%)
 }
 
+export interface UsRankStock {
+  symbol: string;
+  ticker: string;
+  name: string;
+  price: number;
+  change: number;
+  pct: number;
+  amount: number;
+  turnover: number;
+  time: string;
+}
+
 export interface MinuteData {
   code: string;
   prec: number;
@@ -419,6 +431,11 @@ export const api = {
     get<TrendMaResult>(`/api/trend-ma?codes=${encodeURIComponent(codes.join(","))}${refresh ? "&refresh=1" : ""}`),
   parseChain: (name: string, content: string) =>
     post<ParsedChain>(`/api/chain-parse`, { name, content }),
+  chainResearch: (topic: string, refresh = false) =>
+    get<{ topic: string; rows: Record<string, unknown>[]; codeCount: number; note: string }>(
+      `/api/chain-research?topic=${encodeURIComponent(topic)}${refresh ? "&refresh=1" : ""}`
+    ),
+  usRank: (sort: string = "active") => get<UsRankStock[]>(`/api/us-rank?sort=${sort}`),
   news: (size = 60) => withFallback(() => get<NewsItem[]>(`/api/news?size=${size}`), () => directNews(size)),
   treasuries: () => get<Treasury[]>(`/api/treasuries`),
   treasuryHistory: () => get<TreasuryCurvePoint[]>(`/api/treasury-history`),
