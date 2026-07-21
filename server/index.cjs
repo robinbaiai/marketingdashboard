@@ -1219,19 +1219,43 @@ async function handleStockFlows(codesParam) {
   return list.map((c) => out[c]).filter(Boolean);
 }
 
+function boardFlowBaseName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+$/g, "")
+    .replace(/([\u4e00-\u9fa5])(?:VIII|VII|VI|IV|IX|III|II|I|V|X)$/i, "$1")
+    .replace(/\s+/g, "");
+}
+
+function dedupeBoardFlows(boards, limit, po) {
+  const best = new Map();
+  for (const board of boards) {
+    const key = boardFlowBaseName(board.name) || board.code;
+    const prev = best.get(key);
+    const normalized = { ...board, name: key, rawName: board.name };
+    if (!prev || Math.abs(normalized.netIn) > Math.abs(prev.netIn)) best.set(key, normalized);
+  }
+  return [...best.values()]
+    .sort((a, b) => (po === 1 ? b.netIn - a.netIn : a.netIn - b.netIn))
+    .slice(0, limit);
+}
+
 /** 板块实时资金流向图: 流入/流出各取前N/2, 拉取分钟级累计主力净流入 */
 async function handleBoardFlow(n) {
   const half = Math.max(3, Math.min(15, Math.floor((parseInt(n) || 20) / 2)));
   return emEnqueue(async () => {
     const pick = async (po) => {
-      const url = `https://push2delay.eastmoney.com/api/qt/clist/get?fid=f62&po=${po}&pz=${half}&pn=1&np=1&fltt=2&invt=2&fs=${encodeURIComponent("m:90+t:2")}&fields=f12,f14,f62`;
+      const pz = Math.min(60, half * 3);
+      const url = `https://push2delay.eastmoney.com/api/qt/clist/get?fid=f62&po=${po}&pz=${pz}&pn=1&np=1&fltt=2&invt=2&fs=${encodeURIComponent("m:90+t:2")}&fields=f12,f14,f62`;
       return ((await emGet(url))?.data?.diff || []).map((b) => ({
         code: b.f12,
         name: b.f14,
         netIn: num(b.f62),
       }));
     };
-    const [ups, downs] = await Promise.all([pick(1), pick(0)]);
+    const [rawUps, rawDowns] = await Promise.all([pick(1), pick(0)]);
+    const ups = dedupeBoardFlows(rawUps, half, 1);
+    const downs = dedupeBoardFlows(rawDowns, half, 0);
     const boards = [...ups, ...downs.filter((d) => !ups.some((u) => u.code === d.code))];
     const out = [];
     for (const b of boards) {

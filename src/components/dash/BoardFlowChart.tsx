@@ -98,7 +98,9 @@ export function BoardFlowChart({ flows, progress = 1, zoom = false }: { flows: B
       const v = max - f * (max - min);
       return { v, y: Y(v) };
     });
-    return { W, H, X, Y, min, max, lines, labels, ticks, labelW, leftPad, bottomPad, idx, cursorT: series[0].points[idx].t };
+    const cursorSeries = series.find((s) => s.points[idx]) || series.reduce((longest, s) => (s.points.length > longest.points.length ? s : longest), series[0]);
+    const cursorPoint = cursorSeries?.points[Math.min(idx, Math.max(0, cursorSeries.points.length - 1))];
+    return { W, H, X, Y, min, max, lines, labels, ticks, labelW, leftPad, bottomPad, idx, cursorT: cursorPoint?.t || "" };
   }, [flows, size, progress, zoom]);
 
   const tickFont = zoom ? 17 : 9;
