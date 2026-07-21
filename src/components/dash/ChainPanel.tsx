@@ -613,16 +613,21 @@ export function ChainPanel({ className = "" }: { className?: string }) {
     }
     setParseState({ loading: true, error: "", warnings: [] });
     try {
-      const result = await api.chainResearch(name, true);
+      // 问财复杂查询(产业链上中下游)经常返回空，改用简单查询获取关联股票
+      const result = await api.mysterySelect(name, 60, true);
       const rows = result.rows || [];
+      if (rows.length === 0) {
+        setParseState({ loading: false, error: `问财查询"${name}"未返回任何股票`, warnings: [] });
+        return;
+      }
       // 按概念关键词粗分上中下游
-      const upKeywords = ["材料", "设备", "原料", "矿产", "化学", "能源", "硅", "锂", "稀土"];
-      const downKeywords = ["应用", "终端", "消费", "汽车", "手机", "运营", "服务", "系统", "解决方案"];
+      const upKeywords = ["材料", "设备", "原料", "矿产", "化学", "能源", "硅", "锂", "稀土", "半导体", "芯片", "元器件", "晶圆", "封测"];
+      const downKeywords = ["应用", "终端", "消费", "汽车", "手机", "运营", "服务", "系统", "解决方案", "软件", "互联网", "平台", "整机"];
       const up: string[] = [], mid: string[] = [], down: string[] = [];
       for (const r of rows) {
-        const stockName = String(r["股票简称"] || r.name || "");
-        const code = String(r["股票代码"] || r.code || "");
-        const concepts = Array.isArray(r["所属概念"]) ? (r["所属概念"] as string[]).join(" ") : "";
+        const stockName = String(r.name || "");
+        const code = String(r.code || "");
+        const concepts = r.raw ? Object.values(r.raw).filter((v) => typeof v === "string").join(" ") + (Array.isArray(r.raw["所属概念"]) ? (r.raw["所属概念"] as string[]).join(" ") : "") : "";
         const entry = `${stockName}（${code}）`;
         if (upKeywords.some((k) => concepts.includes(k))) up.push(entry);
         else if (downKeywords.some((k) => concepts.includes(k))) down.push(entry);
@@ -630,27 +635,15 @@ export function ChainPanel({ className = "" }: { className?: string }) {
         if (up.length + mid.length + down.length >= 60) break;
       }
       // 保证每段至少有几只
-      const fallback = (arr: string[], all: typeof rows) =>
-        arr.length >= 3 ? arr : all.map((r) => `${r["股票简称"] || r.name || ""}（${r["股票代码"] || r.code || ""}）`).slice(0, 8);
-      const upStocks = fallback(up, rows).join("、");
-      const midStocks = fallback(mid, rows).join("、");
-      const downStocks = fallback(down, rows).join("、");
+      const pad = (arr: string[], all: typeof rows) =>
+        arr.length >= 3 ? arr : all.map((r) => `${r.name || ""}（${r.code || ""}）`).slice(0, 8);
+      const upStocks = pad(up, rows).join("、");
+      const midStocks = pad(mid, rows).join("、");
+      const downStocks = pad(down, rows).join("、");
 
-      const summary = `${name}产业链
-
-上游·材料/设备：
-${upStocks}
-
-中游·制造/封测：
-${midStocks}
-
-下游·应用/终端：
-${downStocks}
-
-核心逻辑：${name}产业链覆盖从原材料到终端应用的完整环节。
-数据来源：同花顺问财 | 共 ${result.codeCount} 只关联股票`;
+      const summary = `${name}产业链\n\n上游·材料/设备：\n${upStocks}\n\n中游·制造/封测：\n${midStocks}\n\n下游·应用/终端：\n${downStocks}\n\n核心逻辑：${name}产业链覆盖从原材料到终端应用的完整环节。\n数据来源：同花顺问财 | 共 ${result.total} 只关联股票`;
       setEditor((cur) => cur && { ...cur, content: summary });
-      setParseState({ loading: false, error: "", warnings: [`已从问财获取 ${result.codeCount} 只关联股票，按概念关键词粗分上中下游，请核验后点击"整理并保存"`] });
+      setParseState({ loading: false, error: "", warnings: [`已从问财获取 ${result.total} 只关联股票，按概念关键词粗分上中下游，请核验后点击"整理并保存"`] });
     } catch (e) {
       setParseState({ loading: false, error: `问财查询失败：${e instanceof Error ? e.message : String(e)}`, warnings: [] });
     }
